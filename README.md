@@ -1,2 +1,4 @@
-Made2Manage Labor Query
+# MWG-Made2Manage-Labor
+
+Made2Manage Labor Query web application
 
