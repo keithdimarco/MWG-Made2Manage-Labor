@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Employee Performance</title>
+<style>
+:root {
+    --navy: #14273d;
+    --navy-2: #1f3a56;
+    --blue: #2767a8;
+    --blue-soft: #eaf2fb;
+    --ink: #1c2733;
+    --muted: #667587;
+    --line: #d9e1e8;
+    --panel: #ffffff;
+    --canvas: #eef2f6;
+    --soft: #f7f9fb;
+    --good-bg: #edf8f2;
+    --good-line: #abd9c3;
+    --good-text: #17633f;
+    --bad-bg: #fff1f1;
+    --bad-line: #e5b3b3;
+    --bad-text: #9b2f2f;
+    --shadow: 0 7px 20px rgba(22, 38, 55, .08);
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: var(--canvas);
+    color: var(--ink);
+}
+.topbar {
+    background: linear-gradient(135deg, var(--navy), var(--navy-2));
+    color: white;
+    min-height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 9px 24px;
+    box-shadow: 0 3px 11px rgba(0,0,0,.14);
+}
+.brand { display: flex; align-items: center; gap: 11px; font-size: 19px; font-weight: 750; }
+.brand-mark {
+    width: 38px; height: 38px; border-radius: 9px; display: inline-flex; align-items: center;
+    justify-content: center; background: white; color: var(--navy); font-size: 12px; font-weight: 850;
+}
+.nav {
+    display: flex; gap: 6px; flex-wrap: wrap; padding: 5px;
+    background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.20); border-radius: 11px;
+}
+.nav a {
+    text-decoration: none; color: #e5edf6; padding: 9px 18px; border-radius: 8px;
+    font-weight: 800; font-size: 14px; min-width: 182px; text-align: center; border: 1px solid transparent;
+}
+.nav a:hover { background: rgba(255,255,255,.14); color: white; }
+.nav a.active { background: white; color: var(--navy); border-color: white; box-shadow: 0 3px 9px rgba(0,0,0,.15); }
+.nav a.active::after, .nav a:not(.active)::after {
+    display: block; margin-top: 2px; font-size: 8px; letter-spacing: .9px;
+}
+.nav a.active::after { content: "CURRENT VIEW"; color: var(--blue); }
+.nav a:not(.active)::after { content: "SWITCH VIEW"; color: #b9cada; }
+.shell { max-width: 1450px; margin: 0 auto; padding: 16px 22px 10px; }
+.page-hero {
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.eyebrow { text-transform: uppercase; letter-spacing: 1.2px; color: var(--blue); font-size: 11px; font-weight: 850; }
+h1 { margin: 0; font-size: 27px; letter-spacing: -.35px; }
+.subtitle { color: var(--muted); font-size: 13px; margin: 0; line-height: 1.4; flex: 1 1 520px; }
+.search-box {
+    background: white; padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px;
+    margin-bottom: 12px; box-shadow: var(--shadow); display: flex; align-items: end; gap: 10px; flex-wrap: wrap;
+}
+.field-group { display: flex; flex-direction: column; gap: 4px; }
+.field-label, .label {
+    font-size: 11px; font-weight: 850; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+}
+input {
+    font: inherit; min-height: 42px; padding: 9px 11px; border: 1px solid #c8d2dc;
+    border-radius: 8px; background: white; color: var(--ink); outline: none;
+}
+input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(39,103,168,.12); }
+button {
+    font: inherit; font-weight: 750; min-height: 42px; padding: 9px 15px; cursor: pointer;
+    border: 1px solid var(--blue); border-radius: 8px; background: var(--blue); color: white;
+}
+button:hover { filter: brightness(.96); }
+.error, .loading, .notice {
+    background: white; border: 1px solid var(--line); padding: 12px 14px; border-radius: 9px;
+    margin-bottom: 10px; box-shadow: var(--shadow); font-size: 13px;
+}
+.error { color: #a32f2f; border-left: 4px solid #c74646; font-weight: 700; }
+.loading { color: var(--navy); border-left: 4px solid var(--blue); font-weight: 700; }
+.notice { border-left: 4px solid #8a97a5; color: #4f5c69; }
+.job-selector {
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 10px;
+    background: white; border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; box-shadow: var(--shadow);
+}
+.job-selector-label { font-size: 12px; font-weight: 850; color: var(--muted); margin-right: 4px; }
+.job-selector button {
+    min-height: 35px; padding: 6px 11px; background: white; color: var(--navy); border-color: #bdc9d5; font-size: 12px;
+}
+.job-selector button.selected { background: var(--navy); color: white; border-color: var(--navy); }
+.job-card {
+    background: white; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 9px;
+    box-shadow: var(--shadow); overflow: hidden;
+}
+.job-header {
+    background: linear-gradient(135deg, var(--navy), var(--navy-2)); color: white;
+    padding: 13px 16px; display: flex; justify-content: space-between; align-items: center; gap: 14px;
+}
+.job-title { font-size: 21px; font-weight: 850; letter-spacing: -.2px; }
+.job-subtitle { margin-top: 4px; line-height: 1.3; color: #d9e5ef; font-size: 13px; }
+.live-pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.30); background: rgba(255,255,255,.10);
+    font-size: 10px; font-weight: 850; letter-spacing: .65px; white-space: nowrap;
+}
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: #78d6ac; box-shadow: 0 0 0 3px rgba(120,214,172,.15); }
+.grid {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 11px 13px 8px;
+}
+.stat { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; min-width: 0; }
+.value {
+    font-size: 18px; font-weight: 850; margin-top: 4px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.description {
+    margin: 0 13px 9px; padding: 9px 11px; background: #f8fafc; border: 1px solid var(--line);
+    border-left: 4px solid var(--blue); border-radius: 8px; color: #455363; font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.operation-history { margin: 0 13px 10px; }
+.operation-history-heading {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+    margin: 0 1px 6px;
+}
+.operation-history-title { font-size: 12px; font-weight: 900; color: var(--navy); text-transform: uppercase; letter-spacing: .45px; }
+.operation-history-note { font-size: 10px; color: var(--muted); }
+.history-wrap { display: grid; grid-template-columns: 1.15fr 1fr; gap: 8px; }
+.history-card { border: 1px solid var(--line); border-radius: 9px; padding: 8px; background: #fbfcfe; min-width: 0; }
+.history-card.production { border-top: 4px solid var(--blue); }
+.history-card.setup { border-top: 4px solid #8a97a5; }
+.history-title { font-size: 11px; font-weight: 900; color: var(--navy); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.history-title small { color: var(--muted); font-weight: 700; font-size: 9px; }
+.history-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+.hist-stat { background: white; border: 1px solid var(--line); border-radius: 7px; padding: 6px 5px; text-align: center; min-width: 0; }
+.hist-value { font-size: 15px; font-weight: 900; margin-top: 2px; color: var(--navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hist-stat.eff-good { background: var(--good-bg); border-color: var(--good-line); }
+.hist-stat.eff-good .hist-value { color: var(--good-text); }
+.hist-stat.eff-bad { background: var(--bad-bg); border-color: var(--bad-line); }
+.hist-stat.eff-bad .hist-value { color: var(--bad-text); }
+.no-history { padding: 8px; color: var(--muted); font-size: 11px; text-align: center; background: white; border: 1px dashed var(--line); border-radius: 7px; }
+.live-box {
+    margin: 0 13px 11px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfe;
+}
+.performance-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 11px; align-items: stretch; }
+.performance-left { display: grid; grid-template-rows: auto auto 1fr; gap: 9px; min-width: 0; }
+.live-input-row { display: flex; align-items: end; gap: 9px; flex-wrap: nowrap; }
+.live-input-group { min-width: 0; flex: 1 1 auto; }
+.live-input-group label { display: block; font-size: 12px; font-weight: 850; margin-bottom: 5px; color: var(--navy); }
+.qty-input { width: 100%; max-width: 245px; font-size: 22px; font-weight: 750; min-height: 44px; }
+.result-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.result-card {
+    background: white; border: 1px solid var(--line); border-radius: 8px; padding: 9px; text-align: center; min-width: 0;
+}
+.result-value { font-size: 24px; font-weight: 850; margin-top: 3px; color: var(--navy); }
+.efficiency-box {
+    text-align: center; padding: 12px 13px; border-radius: 9px;
+    background: linear-gradient(135deg, #eaf2fb, #f5f9fd); border: 1px solid #c9dcef;
+    display: flex; align-items: center; justify-content: center; gap: 18px; min-height: 88px;
+}
+.efficiency-label { font-size: 11px; font-weight: 850; color: var(--blue); text-transform: uppercase; letter-spacing: .85px; }
+.efficiency-value { font-size: 46px; line-height: 1; font-weight: 900; color: var(--navy); letter-spacing: -1px; }
+.projection-box {
+    padding: 13px; border-radius: 9px; border: 1px solid var(--line); background: white;
+    display: flex; flex-direction: column; justify-content: center; min-width: 0;
+}
+.projection-box.status-neutral { background: #f8fafc; }
+.projection-box.status-ontrack { background: #edf8f2; border-color: #abd9c3; }
+.projection-box.status-over { background: #fff1f1; border-color: #e5b3b3; }
+.projection-status { font-size: 21px; line-height: 1.18; font-weight: 900; color: var(--navy); margin-top: 4px; }
+.projection-box.status-ontrack .projection-status { color: #17633f; }
+.projection-box.status-over .projection-status { color: #9b2f2f; }
+.projection-detail { margin-top: 5px; color: var(--muted); line-height: 1.35; font-size: 12px; }
+.projection-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 9px; }
+.projection-stat { background: rgba(255,255,255,.78); border: 1px solid rgba(0,0,0,.07); border-radius: 8px; padding: 9px; text-align: center; }
+.projection-stat .result-value { font-size: 21px; }
+.small-note { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.35; }
+.setup-box {
+    margin: 0 13px 11px; padding: 16px; border: 1px solid var(--line); border-radius: 10px;
+    text-align: center; background: linear-gradient(135deg, #f7f9fb, #ffffff);
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: center;
+}
+.setup-value { font-size: 33px; font-weight: 850; color: var(--navy); }
+.footer { color: #7a8794; text-align: center; font-size: 11px; padding: 7px 0 10px; }
+
+@media (max-width: 1180px) {
+    .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .performance-layout { grid-template-columns: 1fr; }
+    .projection-box { min-height: 0; }
+}
+@media (max-width: 760px) {
+    .topbar { align-items: stretch; flex-direction: column; padding: 11px 14px; }
+    .nav { width: 100%; }
+    .nav a { flex: 1 1 140px; min-width: 0; font-size: 13px; padding: 8px 7px; }
+    .shell { padding: 12px; }
+    .page-hero { display: block; }
+    .subtitle { margin-top: 5px; }
+    .search-box { align-items: stretch; }
+    .field-group, .search-box input, .search-box button { width: 100%; }
+    .job-header { align-items: flex-start; }
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .result-grid, .projection-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .live-input-row { flex-wrap: wrap; }
+    .qty-input { max-width: none; }
+    .live-input-row button { width: 100%; }
+    .efficiency-box { flex-direction: column; gap: 5px; }
+    .setup-box { grid-template-columns: 1fr; }
+    .history-wrap { grid-template-columns: 1fr; }
+    .history-stats { grid-template-columns: repeat(5, minmax(70px, 1fr)); overflow-x: auto; }
+}
+@media (max-width: 520px) {
+    h1 { font-size: 23px; }
+    .grid, .result-grid, .projection-grid { grid-template-columns: 1fr 1fr; }
+    .job-title { font-size: 18px; }
+    .efficiency-value { font-size: 40px; }
+    .projection-status { font-size: 18px; }
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand"><span class="brand-mark">M2M</span><span>Labor Analytics</span></div>
+    <nav class="nav">
+        <a href="/">Part Labor History</a>
+        <a class="active" href="/live">Live Employee Performance</a>
+        <a href="/dashboard">Live Job Dashboard</a>
+    </nav>
+</header>
+<main class="shell">
+    <section class="page-hero">
+        <div class="eyebrow">Shop Floor Dashboard</div>
+        <h1>Live Employee Performance</h1>
+        <div class="subtitle">Active M2M job, current efficiency, and projected finish status in one compact view.</div>
+    </section>
+    <div class="search-box">
+        <div class="field-group">
+            <label class="field-label" for="employeeNumber">Employee Number</label>
+            <input id="employeeNumber" type="text" placeholder="Example: 135">
+        </div>
+        <button onclick="loadEmployee()">Find Current Job</button>
+    </div>
+    <div id="results"></div>
+    <div class="footer">Made2Manage labor analytics • Internal use</div>
+</main>
+<script>
+let liveJobs = [];
+let selectedJobIndex = 0;
+
+function safeNumber(value) {
+    const n = Number(value);
+    return isNaN(n) ? 0 : n;
+}
+
+function formatDateTime(value) {
+    if (!value) return "";
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return value;
+    return d.toLocaleString();
+}
+
+function efficiencyClass(value) {
+    return safeNumber(value) >= 85 ? 'eff-good' : 'eff-bad';
+}
+
+function historyCard(summary, type) {
+    const runs = safeNumber(summary?.Runs);
+    if (!runs) {
+        return `<div class="history-card ${type.toLowerCase()}">
+            <div class="history-title">${type} History <small>No prior history</small></div>
+            <div class="no-history">No comparable ${type.toLowerCase()} history for this part revision and operation.</div>
+        </div>`;
+    }
+
+    const adjusted = safeNumber(summary.AdjustedRuns);
+    const avgQty = safeNumber(summary.AvgQuantity);
+    const avgActual = safeNumber(summary.AvgActualHours);
+    const avgEstimated = safeNumber(summary.AvgEstimatedHours);
+    const efficiency = safeNumber(summary.WeightedEfficiency);
+    const quantityBlock = type === 'Production'
+        ? `<div class="hist-stat"><div class="label">Avg Qty</div><div class="hist-value">${avgQty.toFixed(1)}</div></div>`
+        : `<div class="hist-stat"><div class="label">Jobs</div><div class="hist-value">${safeNumber(summary.Jobs).toFixed(0)}</div></div>`;
+
+    return `<div class="history-card ${type.toLowerCase()}">
+        <div class="history-title">${type} History <small>${adjusted} of ${runs} runs used</small></div>
+        <div class="history-stats">
+            <div class="hist-stat"><div class="label">Runs</div><div class="hist-value">${runs.toFixed(0)}</div></div>
+            ${quantityBlock}
+            <div class="hist-stat"><div class="label">Avg Actual</div><div class="hist-value">${avgActual.toFixed(2)}h</div></div>
+            <div class="hist-stat"><div class="label">Avg Est.</div><div class="hist-value">${avgEstimated.toFixed(2)}h</div></div>
+            <div class="hist-stat ${efficiencyClass(efficiency)}"><div class="label">Efficiency</div><div class="hist-value">${efficiency.toFixed(1)}%</div></div>
+        </div>
+    </div>`;
+}
+
+function renderOperationHistory(job) {
+    return `<div class="operation-history">
+        <div class="operation-history-heading">
+            <div class="operation-history-title">Current Operation Average Labor History</div>
+            <div class="operation-history-note">Same part revision + operation • adjusted ±1 SD</div>
+        </div>
+        <div class="history-wrap">
+            ${historyCard(job.HistoricalProduction || {}, 'Production')}
+            ${historyCard(job.HistoricalSetup || {}, 'Setup')}
+        </div>
+    </div>`;
+}
+
+async function loadEmployee() {
+    const employeeNumber = document.getElementById("employeeNumber").value.trim();
+    const results = document.getElementById("results");
+    if (!employeeNumber) {
+        results.innerHTML = '<div class="error">Enter an employee number.</div>';
+        return;
+    }
+    results.innerHTML = '<div class="loading">Looking up current Made2Manage labor...</div>';
+    try {
+        const response = await fetch('/api/live/' + encodeURIComponent(employeeNumber));
+        if (!response.ok) {
+            const detail = await response.json().catch(() => ({}));
+            throw new Error(detail.detail || 'No active direct labor job found.');
+        }
+        liveJobs = await response.json();
+        selectedJobIndex = 0;
+        renderJobs();
+    } catch (error) {
+        results.innerHTML = '<div class="error">' + error.message + '</div>';
+    }
+}
+
+function selectJob(index) {
+    selectedJobIndex = index;
+    renderJobs();
+}
+
+function renderJobs() {
+    const results = document.getElementById("results");
+    if (!liveJobs.length) {
+        results.innerHTML = '<div class="error">No active direct labor job found.</div>';
+        return;
+    }
+
+    let html = "";
+    if (liveJobs.length > 1) {
+        html += '<div class="job-selector"><span class="job-selector-label">ACTIVE JOBS:</span>';
+        liveJobs.forEach((item, i) => {
+            const selected = i === selectedJobIndex ? ' selected' : '';
+            html += `<button class="${selected}" onclick="selectJob(${i})">${item.JobNumber} • Op ${item.OperationNumber}</button>`;
+        });
+        html += '</div>';
+    }
+
+    const index = Math.min(selectedJobIndex, liveJobs.length - 1);
+    const job = liveJobs[index];
+    const opQty = safeNumber(job.OperationQuantity);
+    const reported = safeNumber(job.OperationQtyReported);
+    const remaining = safeNumber(job.OperationQtyRemaining);
+    const remainingEstimate = safeNumber(job.RemainingProductionEstimate);
+    const setupEstimate = safeNumber(job.SetupEstimate);
+    const targetRate = safeNumber(job.TargetPiecesPerHour);
+    const elapsed = safeNumber(job.CurrentSegmentHours);
+    const laborType = job.ActiveLaborType || "Production";
+    const operationText = job.OperationDescription || '';
+
+    html += `<div class="job-card">
+        <div class="job-header">
+            <div>
+                <div class="job-title">${job.EmployeeName || ''} (${job.EmployeeNumber})</div>
+                <div class="job-subtitle">Job ${job.JobNumber} &nbsp; • &nbsp; Part ${job.PartNumber || ''} ${job.Revision ? 'Rev ' + job.Revision : ''} &nbsp; • &nbsp; Operation ${job.OperationNumber}</div>
+            </div>
+            <div class="live-pill"><span class="live-dot"></span>LIVE</div>
+        </div>
+        <div class="grid">
+            <div class="stat"><div class="label">Labor Type</div><div class="value">${laborType}</div></div>
+            <div class="stat"><div class="label">Work Center</div><div class="value">${job.WorkCenter || ''}</div></div>
+            <div class="stat"><div class="label">Clocked In</div><div class="value" style="font-size:12px" title="${formatDateTime(job.ClockInTime)}">${formatDateTime(job.ClockInTime)}</div></div>
+            <div class="stat"><div class="label">Segment Hrs</div><div class="value" id="elapsed-${index}">${elapsed.toFixed(2)}</div></div>
+            <div class="stat"><div class="label">Operation Qty</div><div class="value">${opQty.toFixed(0)}</div></div>
+            <div class="stat"><div class="label">M2M Complete</div><div class="value">${reported.toFixed(0)}</div></div>
+            <div class="stat"><div class="label">M2M Remaining</div><div class="value">${remaining.toFixed(0)}</div></div>
+            <div class="stat"><div class="label">Remaining Est.</div><div class="value">${remainingEstimate.toFixed(2)} hrs</div></div>
+        </div>
+        ${operationText ? `<div class="description" title="${operationText.replace(/"/g, '&quot;')}"><strong>Operation:</strong> ${operationText}</div>` : ''}
+        ${renderOperationHistory(job)}
+        ${laborType === 'Setup' ? renderSetup(job, index, setupEstimate, elapsed) : renderProduction(job, index, targetRate, elapsed)}
+    </div>`;
+
+    results.innerHTML = html;
+}
+
+function renderSetup(job, index, setupEstimate, elapsed) {
+    let budgetUsed = setupEstimate > 0 ? (elapsed / setupEstimate) * 100 : 0;
+    return `<div class="setup-box">
+        <div><div class="label">Setup Estimate</div><div class="setup-value">${setupEstimate.toFixed(2)} hrs</div></div>
+        <div><div class="label">Current Setup Time</div><div class="setup-value">${elapsed.toFixed(2)} hrs</div></div>
+        <div><div class="label">Setup Budget Used</div><div class="setup-value">${budgetUsed.toFixed(1)}%</div></div>
+    </div>`;
+}
+
+function renderProduction(job, index, targetRate, elapsed) {
+    return `<div class="live-box">
+        <div class="performance-layout">
+            <div class="performance-left">
+                <div class="live-input-row">
+                    <div class="live-input-group">
+                        <label>Pieces completed since this clock-on</label>
+                        <input class="qty-input" id="qty-${index}" type="number" min="0" step="1" value="0" oninput="calculateEfficiency(${index})">
+                    </div>
+                    <button onclick="calculateEfficiency(${index})">Calculate</button>
+                </div>
+                <div class="result-grid">
+                    <div class="result-card"><div class="label">Target Rate</div><div class="result-value">${targetRate.toFixed(2)}</div><div class="label">pcs/hr</div></div>
+                    <div class="result-card"><div class="label">Segment Hrs</div><div class="result-value">${elapsed.toFixed(2)}</div></div>
+                    <div class="result-card"><div class="label">Earned Hours</div><div class="result-value" id="earned-${index}">0.00</div></div>
+                </div>
+                <div class="efficiency-box">
+                    <div class="efficiency-label">Current Labor Efficiency</div>
+                    <div class="efficiency-value" id="efficiency-${index}">--</div>
+                </div>
+            </div>
+            <div class="projection-box status-neutral" id="projection-box-${index}">
+                <div class="label">Production Finish Projection</div>
+                <div class="projection-status" id="projection-status-${index}">Enter current quantity to project finish</div>
+                <div class="projection-detail" id="projection-detail-${index}">Compares the current segment pace with M2M's estimated production time for the quantity M2M currently shows remaining.</div>
+                <div class="projection-grid">
+                    <div class="projection-stat"><div class="label">Projected Hrs</div><div class="result-value" id="projected-hours-${index}">--</div></div>
+                    <div class="projection-stat"><div class="label">M2M Est. Hrs</div><div class="result-value" id="remaining-estimate-${index}">${safeNumber(job.RemainingProductionEstimate).toFixed(2)}</div></div>
+                    <div class="projection-stat"><div class="label">Variance</div><div class="result-value" id="projected-variance-${index}">--</div></div>
+                </div>
+                <div class="small-note">Projection assumes the current pace continues. Entered quantity is not saved to M2M.</div>
+            </div>
+        </div>
+    </div>`;
+}
+
+async function calculateEfficiency(index) {
+    const job = liveJobs[index];
+    if (!job || job.ActiveLaborType === 'Setup') return;
+
+    const qtyInput = document.getElementById('qty-' + index);
+    if (!qtyInput) return;
+    const qty = Math.max(0, Number(qtyInput.value) || 0);
+    const earnedElement = document.getElementById('earned-' + index);
+    const efficiencyElement = document.getElementById('efficiency-' + index);
+    const projectionBox = document.getElementById('projection-box-' + index);
+    const projectionStatus = document.getElementById('projection-status-' + index);
+    const projectionDetail = document.getElementById('projection-detail-' + index);
+    const projectedHoursElement = document.getElementById('projected-hours-' + index);
+    const projectedVarianceElement = document.getElementById('projected-variance-' + index);
+
+    const elapsed = safeNumber(job.CurrentSegmentHours);
+    const m2mRemainingQty = safeNumber(job.OperationQtyRemaining);
+    const m2mRemainingEstimate = safeNumber(job.RemainingProductionEstimate);
+
+    function resetProjection(message) {
+        projectionBox.className = 'projection-box status-neutral';
+        projectionStatus.textContent = message;
+        projectionDetail.textContent = "Compares the current segment pace with M2M's estimated production time for the quantity M2M currently shows remaining.";
+        projectedHoursElement.textContent = '--';
+        projectedVarianceElement.textContent = '--';
+    }
+
+    if (qty <= 0) {
+        earnedElement.textContent = '0.00';
+        efficiencyElement.textContent = '--';
+        resetProjection('Enter current quantity to project finish');
+        return;
+    }
+
+    if (elapsed <= 0) {
+        earnedElement.textContent = '0.00';
+        efficiencyElement.textContent = '--';
+        resetProjection('Not enough elapsed time to project finish');
+        return;
+    }
+
+    try {
+        const url = '/api/live-estimate?job_number=' + encodeURIComponent(job.JobNumber)
+            + '&operation_number=' + encodeURIComponent(job.OperationNumber)
+            + '&quantity=' + encodeURIComponent(qty);
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Could not calculate M2M estimate.');
+        const result = await response.json();
+        const earned = safeNumber(result.EarnedHours);
+        const efficiency = (earned / elapsed) * 100;
+
+        earnedElement.textContent = earned.toFixed(2);
+        efficiencyElement.textContent = efficiency.toFixed(1) + '%';
+
+        if (m2mRemainingQty <= 0 || m2mRemainingEstimate <= 0) {
+            resetProjection('M2M does not have a usable remaining production estimate');
+            return;
+        }
+
+        const currentRate = qty / elapsed;
+        const qtyStillToProduce = Math.max(m2mRemainingQty - qty, 0);
+        const additionalHours = currentRate > 0 ? qtyStillToProduce / currentRate : 0;
+        const projectedProductionHours = elapsed + additionalHours;
+        const projectedVariance = projectedProductionHours - m2mRemainingEstimate;
+
+        projectedHoursElement.textContent = projectedProductionHours.toFixed(2);
+        projectedVarianceElement.textContent = (projectedVariance >= 0 ? '+' : '') + projectedVariance.toFixed(2) + ' hrs';
+
+        if (projectedVariance <= 0) {
+            projectionBox.className = 'projection-box status-ontrack';
+            projectionStatus.textContent = 'ON TRACK TO FINISH WITHIN ESTIMATE';
+            projectionDetail.textContent = 'Projected to finish about ' + Math.abs(projectedVariance).toFixed(2) + ' hours under the M2M remaining production estimate.';
+        } else {
+            projectionBox.className = 'projection-box status-over';
+            projectionStatus.textContent = 'PROJECTED TO EXCEED ESTIMATED TIME';
+            projectionDetail.textContent = 'Projected to finish about ' + projectedVariance.toFixed(2) + ' hours over the M2M remaining production estimate.';
+        }
+    } catch (error) {
+        earnedElement.textContent = 'ERR';
+        efficiencyElement.textContent = 'ERR';
+        projectionBox.className = 'projection-box status-neutral';
+        projectionStatus.textContent = 'Projection unavailable';
+        projectionDetail.textContent = error.message;
+        projectedHoursElement.textContent = 'ERR';
+        projectedVarianceElement.textContent = 'ERR';
+    }
+}
+
+document.getElementById("employeeNumber").addEventListener("keydown", function(event) {
+    if (event.key === "Enter") loadEmployee();
+});
+</script>
+</body>
+</html>
