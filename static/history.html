@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M2M Part Labor History</title>
+<style>
+:root {
+    --navy: #14273d;
+    --navy-2: #1f3a56;
+    --blue: #2767a8;
+    --blue-soft: #eaf2fb;
+    --ink: #1c2733;
+    --muted: #667587;
+    --line: #d9e1e8;
+    --panel: #ffffff;
+    --canvas: #eef2f6;
+    --soft: #f7f9fb;
+    --warning: #fff4cf;
+    --warning-line: #e5b94d;
+    --shadow: 0 8px 24px rgba(22, 38, 55, .08);
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: var(--canvas);
+    color: var(--ink);
+}
+.topbar {
+    background: linear-gradient(135deg, var(--navy), var(--navy-2));
+    color: white;
+    min-height: 72px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 0 28px;
+    box-shadow: 0 3px 12px rgba(0,0,0,.14);
+}
+.brand { display: flex; align-items: center; gap: 12px; font-size: 20px; font-weight: 700; letter-spacing: .2px; }
+.brand-mark {
+    width: 42px; height: 42px; border-radius: 10px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: white; color: var(--navy); font-size: 13px; font-weight: 800;
+}
+.nav {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    padding: 5px;
+    background: rgba(255,255,255,.10);
+    border: 1px solid rgba(255,255,255,.20);
+    border-radius: 12px;
+}
+.nav a {
+    text-decoration: none;
+    color: #e5edf6;
+    padding: 11px 20px;
+    border-radius: 8px;
+    font-weight: 800;
+    font-size: 15px;
+    min-width: 190px;
+    text-align: center;
+    border: 1px solid transparent;
+    transition: background .15s ease, color .15s ease, transform .15s ease;
+}
+.nav a:hover {
+    background: rgba(255,255,255,.14);
+    color: white;
+}
+.nav a.active {
+    background: white;
+    color: var(--navy);
+    border-color: white;
+    box-shadow: 0 3px 10px rgba(0,0,0,.16);
+}
+.nav a.active::after {
+    content: "CURRENT VIEW";
+    display: block;
+    margin-top: 3px;
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: var(--blue);
+}
+.nav a:not(.active)::after {
+    content: "SWITCH VIEW";
+    display: block;
+    margin-top: 3px;
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: #b9cada;
+}
+.shell { max-width: 1540px; margin: 0 auto; padding: 28px; }
+.page-hero { margin-bottom: 20px; }
+.eyebrow { text-transform: uppercase; letter-spacing: 1.4px; color: var(--blue); font-size: 12px; font-weight: 800; margin-bottom: 7px; }
+h1 { margin: 0; font-size: 32px; letter-spacing: -.4px; }
+.subtitle { color: var(--muted); margin-top: 7px; line-height: 1.5; max-width: 900px; }
+.card, .search-box, .filters, .summary, .part-header {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: var(--shadow); margin-bottom: 18px;
+}
+.search-box { padding: 18px; display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
+.field-group { display: flex; flex-direction: column; gap: 6px; }
+.field-label, .filter-label { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .55px; color: var(--muted); }
+input, select {
+    font: inherit; min-height: 42px; padding: 9px 11px; border: 1px solid #c8d2dc;
+    border-radius: 8px; background: white; color: var(--ink); outline: none;
+}
+input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(39,103,168,.13); }
+button {
+    font: inherit; font-weight: 700; min-height: 42px; padding: 9px 14px; cursor: pointer;
+    border: 1px solid #c8d2dc; border-radius: 8px; background: white; color: var(--ink);
+}
+button:hover { background: #f3f6f9; }
+.search-box button { background: var(--blue); color: white; border-color: var(--blue); padding-inline: 20px; }
+.search-box button:hover { filter: brightness(.95); }
+.filters { padding: 18px; }
+.filters strong { color: var(--navy); }
+.filters input, .filters select, .filters button { margin: 7px 8px 7px 0; }
+.quick-date-button { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+.summary { padding: 18px; }
+.summary > strong { font-size: 18px; color: var(--navy); }
+.summary-section-title { font-size: 15px; font-weight: 800; color: var(--navy); margin-bottom: 10px; }
+.summary-block { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.summary-grid { display: grid; grid-template-columns: repeat(5, minmax(140px, 1fr)); gap: 12px; }
+.summary-card {
+    background: var(--soft); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px; text-align: left; color: var(--muted); font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .45px;
+}
+.summary-value { font-size: 24px; font-weight: 800; color: var(--ink); margin-top: 6px; text-transform: none; letter-spacing: 0; }
+.summary-card.efficiency-good, .operation-summary-card.efficiency-good {
+    background: #edf8f2; border-color: #abd9c3;
+}
+.summary-card.efficiency-bad, .operation-summary-card.efficiency-bad {
+    background: #fff1f1; border-color: #e5b3b3;
+}
+.summary-card.efficiency-good .summary-value,
+.operation-summary-card.efficiency-good .operation-summary-value { color: #17633f; }
+.summary-card.efficiency-bad .summary-value,
+.operation-summary-card.efficiency-bad .operation-summary-value { color: #9b2f2f; }
+.part-header {
+    padding: 14px 18px; display: flex; gap: 24px; flex-wrap: wrap; align-items: center;
+    border-left: 4px solid var(--blue);
+}
+.part-header strong { color: var(--navy); }
+.operation {
+    background: var(--panel); margin-bottom: 16px; border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden; box-shadow: var(--shadow);
+}
+.operation-header {
+    background: linear-gradient(135deg, var(--navy), var(--navy-2)); color: white;
+    padding: 16px 18px; cursor: pointer; user-select: none; display: flex;
+    justify-content: space-between; align-items: center; gap: 16px;
+}
+.operation-header:hover { filter: brightness(1.04); }
+.operation-number { font-size: 20px; font-weight: 800; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.operation-workcenter { font-size: 14px; font-weight: 700; color: #c8d8e8; }
+.operation-description { margin-top: 5px; line-height: 1.4; color: #d9e5ef; font-size: 13px; max-width: 1100px; }
+.operation-toggle {
+    font-size: 24px; font-weight: 400; min-width: 40px; min-height: 40px;
+    border: 1px solid rgba(255,255,255,.22); display: flex; align-items: center;
+    justify-content: center; border-radius: 8px; cursor: pointer; background: rgba(255,255,255,.06);
+}
+.operation-toggle:hover { background: rgba(255,255,255,.14); }
+.operation-content { display: block; }
+.operation-content.collapsed { display: none; }
+.operation-summary {
+    display: grid; grid-template-columns: repeat(6, minmax(130px, 1fr)); gap: 10px;
+    padding: 14px; background: #f5f8fb; border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+}
+.operation-summary-card {
+    background: white; border: 1px solid var(--line); border-radius: 9px; padding: 11px;
+    color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .35px;
+}
+.operation-summary-value { font-size: 19px; font-weight: 800; color: var(--ink); margin-top: 5px; text-transform: none; letter-spacing: 0; }
+.labor-section-title {
+    padding: 10px 15px; background: var(--blue-soft); color: var(--navy); font-size: 15px;
+    font-weight: 800; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.section-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.section-row-count { color: var(--muted); font-size: 12px; font-weight: 700; }
+.clear-column-filters {
+    min-height: 30px; padding: 4px 9px; font-size: 11px; border-radius: 7px;
+    background: white; color: var(--navy); border: 1px solid #c8d2dc;
+}
+.table-wrap { width: 100%; overflow-x: auto; }
+table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 1180px; }
+th {
+    background: #f7f9fb; color: #526171; text-align: left; padding: 8px 8px;
+    border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .45px; position: sticky; top: 0; z-index: 2;
+}
+.column-head-row th { padding: 0; }
+.sort-button {
+    width: 100%; min-height: 34px; padding: 8px; border: 0; border-radius: 0;
+    background: transparent; color: inherit; text-align: left; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .45px; display: flex; align-items: center;
+    justify-content: space-between; gap: 7px;
+}
+.sort-button:hover { background: #edf2f6; }
+.sort-indicator { color: var(--blue); font-size: 12px; min-width: 12px; text-align: right; }
+.filter-row th { top: 34px; z-index: 2; padding: 5px 5px 7px; background: #eef3f7; }
+.column-filter {
+    width: 100%; min-width: 72px; min-height: 30px; padding: 5px 7px; border-radius: 6px;
+    font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: normal;
+    box-sizing: border-box;
+}
+.column-filter::placeholder { color: #91a0ae; }
+td { padding: 9px; border-bottom: 1px solid #e8edf2; white-space: nowrap; font-size: 13px; }
+.no-section-results td { text-align: center; color: var(--muted); font-style: italic; padding: 14px; }
+tbody tr:nth-child(even):not(.average-row):not(.outlier-row) { background: #fbfcfd; }
+tbody tr:hover:not(.average-row) { background: #f0f5fa; }
+.average-row { background: #e9f0f7; font-weight: 800; }
+.average-row td { padding: 10px 9px; border-top: 2px solid #b8c9d9; }
+.outlier-row { background: var(--warning) !important; }
+.outlier-row:hover { background: #ffedaf !important; }
+.outlier-badge {
+    font-size: 10px; font-weight: 800; margin-left: 6px; padding: 3px 6px;
+    border-radius: 999px; background: #f3c85b; color: #5f4700;
+}
+.outlier-note { font-size: 11px; font-weight: 600; color: #6d7782; margin-left: 8px; }
+.error, .loading {
+    background: white; border: 1px solid var(--line); box-shadow: var(--shadow);
+    padding: 16px 18px; border-radius: 10px; margin-bottom: 16px;
+}
+.error { color: #a32f2f; border-left: 4px solid #c74646; font-weight: 700; }
+.loading { color: var(--navy); border-left: 4px solid var(--blue); font-weight: 700; }
+.footer { color: #7a8794; text-align: center; font-size: 12px; padding: 18px 0 28px; }
+@media (max-width: 1000px) {
+    .topbar { align-items: flex-start; flex-direction: column; padding: 14px 18px; }
+    .shell { padding: 18px; }
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    .operation-summary { grid-template-columns: repeat(6, minmax(130px, 1fr)); }
+}
+@media (max-width: 620px) {
+    h1 { font-size: 27px; }
+    .nav { width: 100%; }
+    .nav a { flex: 1 1 140px; min-width: 0; text-align: center; font-size: 13px; padding: 10px 8px; }
+    .search-box { align-items: stretch; }
+    .field-group, .search-box input, .search-box button { width: 100%; }
+    .summary-grid, .operation-summary { grid-template-columns: 1fr; }
+    .operation-number { font-size: 18px; }
+    .operation-description { font-size: 12px; }
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand"><span class="brand-mark">M2M</span><span>Labor Analytics</span></div>
+    <nav class="nav">
+        <a class="active" href="/">Part Labor History</a>
+        <a href="/live">Live Employee Performance</a>
+        <a href="/dashboard">Live Job Dashboard</a>
+    </nav>
+</header>
+<main class="shell">
+    <section class="page-hero">
+        <div class="eyebrow">Manufacturing Intelligence</div>
+        <h1>Part Labor History</h1>
+        <div class="subtitle">Review historical labor performance by part number, revision, operation, labor type, and date.</div>
+    </section>
+    <div class="search-box">
+        <div class="field-group">
+            <label class="field-label" for="partNumber">Part Number</label>
+            <input id="partNumber" type="text" placeholder="Example: 209919">
+        </div>
+        <button onclick="searchPart()">Search Part</button>
+    </div>
+    <div id="filterArea"></div>
+    <div id="summaryArea"></div>
+    <div id="results"></div>
+    <div class="footer">Made2Manage labor analytics • Internal use</div>
+</main>
+<script>
+let allData = [];
+
+async function searchPart() {
+    const partNumber = document.getElementById("partNumber").value.trim();
+    const resultsDiv = document.getElementById("results");
+    const filterArea = document.getElementById("filterArea");
+    const summaryArea = document.getElementById("summaryArea");
+    if (!partNumber) {
+        resultsDiv.innerHTML = '<div class="error">Enter a part number.</div>';
+        return;
+    }
+    resultsDiv.innerHTML = '<div class="loading">Loading labor history...</div>';
+    filterArea.innerHTML = "";
+    summaryArea.innerHTML = "";
+    try {
+        const response = await fetch("/api/part-labor-history/" + encodeURIComponent(partNumber));
+        if (!response.ok) throw new Error("No labor history found.");
+        const rawData = await response.json();
+        allData = combineLaborEntries(rawData);
+        buildFilters(allData);
+        applyFilters();
+    } catch (error) {
+        resultsDiv.innerHTML = '<div class="error">' + error.message + '</div>';
+    }
+}
+
+function combineLaborEntries(rows) {
+    const groups = {};
+    rows.forEach(row => {
+        const laborDate = row.LaborDate ? row.LaborDate.substring(0, 10) : "";
+        const key = [row.JobNumber, row.OperationNumber, row.EmployeeNumber, laborDate, row.LaborType, row.PartRevision].join("|");
+        if (!groups[key]) {
+            groups[key] = {
+                PartNumber: row.PartNumber,
+                PartRevision: row.PartRevision,
+                JobNumber: row.JobNumber,
+                OperationNumber: row.OperationNumber,
+                WorkCenter: row.WorkCenter,
+                WorkCenterName: row.WorkCenterName,
+                OperationDescription: row.OperationDescription,
+                EmployeeNumber: row.EmployeeNumber,
+                EmployeeName: row.EmployeeName,
+                LaborType: row.LaborType,
+                LaborDate: row.LaborDate,
+                StartDateTime: row.StartDateTime,
+                EndDateTime: row.EndDateTime,
+                QuantityComplete: 0,
+                ScrapQuantity: 0,
+                ActualHours: 0,
+                EstimatedHours: 0,
+                VarianceHours: 0,
+                EfficiencyPercent: 0,
+                EntryCount: 0
+            };
+        }
+        const group = groups[key];
+        group.QuantityComplete += Number(row.QuantityComplete) || 0;
+        group.ScrapQuantity += Number(row.ScrapQuantity) || 0;
+        group.ActualHours += Number(row.ActualHours) || 0;
+        group.EstimatedHours += Number(row.EstimatedHours) || 0;
+        group.EntryCount += 1;
+        if (row.StartDateTime && (!group.StartDateTime || row.StartDateTime < group.StartDateTime)) group.StartDateTime = row.StartDateTime;
+        if (row.EndDateTime && (!group.EndDateTime || row.EndDateTime > group.EndDateTime)) group.EndDateTime = row.EndDateTime;
+    });
+    const combinedRows = Object.values(groups);
+    combinedRows.forEach(row => {
+        row.VarianceHours = row.ActualHours - row.EstimatedHours;
+        row.EfficiencyPercent = row.ActualHours > 0 ? (row.EstimatedHours / row.ActualHours) * 100 : 0;
+    });
+    combinedRows.sort((a, b) => {
+        const opDifference = Number(a.OperationNumber) - Number(b.OperationNumber);
+        if (opDifference !== 0) return opDifference;
+        return (a.LaborDate || "").localeCompare(b.LaborDate || "");
+    });
+    return combinedRows;
+}
+
+function buildFilters(data) {
+    const revisions = [...new Set(data.map(row => row.PartRevision))].sort();
+    const operations = [...new Set(data.map(row => row.OperationNumber))].sort((a, b) => Number(a) - Number(b));
+    let revisionOptions = '<option value="">All Revisions</option>';
+    revisions.forEach(rev => revisionOptions += `<option value="${rev}">${rev}</option>`);
+    let operationOptions = '<option value="">All Operations</option>';
+    operations.forEach(op => operationOptions += `<option value="${op}">Operation ${op}</option>`);
+    document.getElementById("filterArea").innerHTML = `
+        <div class="filters">
+            <strong>Filters:</strong><br><br>
+            <span class="filter-label">Revision:</span>
+            <select id="revisionFilter" onchange="applyFilters()">${revisionOptions}</select>
+            <span class="filter-label">Operation:</span>
+            <select id="operationFilter" onchange="applyFilters()">${operationOptions}</select>
+            <span class="filter-label">Labor Type:</span>
+            <select id="laborTypeFilter" onchange="applyFilters()">
+                <option value="">All Labor</option>
+                <option value="Setup">Setup</option>
+                <option value="Production">Production</option>
+            </select><br>
+            <span class="filter-label">From Date:</span>
+            <input id="fromDateFilter" type="date" onchange="applyFilters()">
+            <span class="filter-label">To Date:</span>
+            <input id="toDateFilter" type="date" onchange="applyFilters()"><br>
+            <strong>Quick Dates:</strong>
+            <button class="quick-date-button" onclick="setDatePreset(30)">Last 30 Days</button>
+            <button class="quick-date-button" onclick="setDatePreset(90)">Last 90 Days</button>
+            <button class="quick-date-button" onclick="setDatePreset(365)">Last 1 Year</button>
+            <button class="quick-date-button" onclick="setAllTime()">All Time</button><br>
+            <button onclick="clearFilters()">Clear Filters</button>
+            <button onclick="expandAll()">Expand All</button>
+            <button onclick="collapseAll()">Collapse All</button>
+        </div>`;
+}
+
+function formatDateForInput(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return year + "-" + month + "-" + day;
+}
+
+function setDatePreset(days) {
+    const today = new Date();
+    const fromDate = new Date();
+    fromDate.setDate(today.getDate() - days);
+    document.getElementById("fromDateFilter").value = formatDateForInput(fromDate);
+    document.getElementById("toDateFilter").value = formatDateForInput(today);
+    applyFilters();
+}
+
+function setAllTime() {
+    document.getElementById("fromDateFilter").value = "";
+    document.getElementById("toDateFilter").value = "";
+    applyFilters();
+}
+
+function clearFilters() {
+    document.getElementById("revisionFilter").value = "";
+    document.getElementById("operationFilter").value = "";
+    document.getElementById("laborTypeFilter").value = "";
+    document.getElementById("fromDateFilter").value = "";
+    document.getElementById("toDateFilter").value = "";
+    applyFilters();
+}
+
+function applyFilters() {
+    const revision = document.getElementById("revisionFilter") ? document.getElementById("revisionFilter").value : "";
+    const operation = document.getElementById("operationFilter") ? document.getElementById("operationFilter").value : "";
+    const laborType = document.getElementById("laborTypeFilter") ? document.getElementById("laborTypeFilter").value : "";
+    const fromDate = document.getElementById("fromDateFilter") ? document.getElementById("fromDateFilter").value : "";
+    const toDate = document.getElementById("toDateFilter") ? document.getElementById("toDateFilter").value : "";
+    const filteredData = allData.filter(row => {
+        const laborDate = row.LaborDate ? row.LaborDate.substring(0, 10) : "";
+
+        // Hide zero-quantity production/other labor records.
+        // Setup records are preserved because setup labor normally has Qty = 0.
+        const quantityMatch = row.LaborType === "Setup" || Number(row.QuantityComplete || 0) > 0;
+
+        return quantityMatch
+            && (!revision || row.PartRevision === revision)
+            && (!operation || String(row.OperationNumber) === operation)
+            && (!laborType || row.LaborType === laborType)
+            && (!fromDate || (laborDate && laborDate >= fromDate))
+            && (!toDate || (laborDate && laborDate <= toDate));
+    });
+    displaySummary(filteredData);
+    displayResults(filteredData);
+}
+
+function averageOf(rows, field) {
+    const values = rows.map(row => Number(row[field])).filter(value => !isNaN(value));
+    if (!values.length) return 0;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function totalOf(rows, field) {
+    return rows.map(row => Number(row[field]) || 0).reduce((sum, value) => sum + value, 0);
+}
+
+function weightedEfficiency(rows) {
+    const totalActual = totalOf(rows, "ActualHours");
+    const totalEstimated = totalOf(rows, "EstimatedHours");
+    if (totalActual <= 0) return 0;
+    return (totalEstimated / totalActual) * 100;
+}
+
+function efficiencyStatusClass(efficiency) {
+    return Number(efficiency) >= 85 ? "efficiency-good" : "efficiency-bad";
+}
+
+function uniqueJobs(rows) {
+    return new Set(rows.map(row => row.JobNumber)).size;
+}
+
+function standardDeviation(values) {
+    if (values.length <= 1) return 0;
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance = values.map(value => Math.pow(value - mean, 2)).reduce((sum, value) => sum + value, 0) / values.length;
+    return Math.sqrt(variance);
+}
+
+function getVarianceBounds(rows) {
+    if (rows.length <= 2) return {mean: 0, sd: 0, lower: null, upper: null};
+    const variances = rows.map(row => Number(row.VarianceHours)).filter(value => !isNaN(value));
+    if (variances.length <= 2) return {mean: 0, sd: 0, lower: null, upper: null};
+    const mean = variances.reduce((sum, value) => sum + value, 0) / variances.length;
+    const sd = standardDeviation(variances);
+    if (sd === 0) return {mean: mean, sd: 0, lower: null, upper: null};
+    return {mean: mean, sd: sd, lower: mean - sd, upper: mean + sd};
+}
+
+function isVarianceOutlier(row, bounds) {
+    if (bounds.lower === null || bounds.upper === null) return false;
+    const variance = Number(row.VarianceHours);
+    if (isNaN(variance)) return false;
+    return variance < bounds.lower || variance > bounds.upper;
+}
+
+function removeVarianceOutliers(rows) {
+    const bounds = getVarianceBounds(rows);
+    return rows.filter(row => !isVarianceOutlier(row, bounds));
+}
+
+function buildSummaryCards(rows, title) {
+    const jobs = uniqueJobs(rows);
+    const totalActual = totalOf(rows, "ActualHours");
+    const totalEstimated = totalOf(rows, "EstimatedHours");
+    const variance = totalActual - totalEstimated;
+    const efficiency = weightedEfficiency(rows);
+    return `
+        <div class="summary-block">
+            <div class="summary-section-title">${title}</div>
+            <div class="summary-grid">
+                <div class="summary-card">Jobs<div class="summary-value">${jobs}</div></div>
+                <div class="summary-card">Actual Hrs<div class="summary-value">${totalActual.toFixed(2)}</div></div>
+                <div class="summary-card">Estimated Hrs<div class="summary-value">${totalEstimated.toFixed(2)}</div></div>
+                <div class="summary-card">Variance<div class="summary-value">${variance.toFixed(2)}</div></div>
+                <div class="summary-card ${efficiencyStatusClass(efficiency)}">Weighted Efficiency<div class="summary-value">${efficiency.toFixed(1)}%</div></div>
+            </div>
+        </div>`;
+}
+
+function displaySummary(data) {
+    const summaryArea = document.getElementById("summaryArea");
+    if (!data.length) { summaryArea.innerHTML = ""; return; }
+    const setupRows = data.filter(row => row.LaborType === "Setup");
+    const productionRows = data.filter(row => row.LaborType === "Production");
+    let html = '<div class="summary"><strong>Filtered Labor Summary</strong>';
+    if (setupRows.length) html += buildSummaryCards(setupRows, "Setup Summary");
+    if (productionRows.length) html += buildSummaryCards(productionRows, "Production Summary");
+    html += '</div>';
+    summaryArea.innerHTML = html;
+}
+
+function toggleOperation(operationId) {
+    const content = document.getElementById("operation-content-" + operationId);
+    const toggle = document.getElementById("operation-toggle-" + operationId);
+    if (!content || !toggle) return;
+    if (content.classList.contains("collapsed")) {
+        content.classList.remove("collapsed");
+        toggle.innerHTML = "−";
+    } else {
+        content.classList.add("collapsed");
+        toggle.innerHTML = "+";
+    }
+}
+
+function expandAll() {
+    document.querySelectorAll(".operation-content").forEach(content => content.classList.remove("collapsed"));
+    document.querySelectorAll(".operation-toggle").forEach(toggle => toggle.innerHTML = "−");
+}
+
+function collapseAll() {
+    document.querySelectorAll(".operation-content").forEach(content => content.classList.add("collapsed"));
+    document.querySelectorAll(".operation-toggle").forEach(toggle => toggle.innerHTML = "+");
+}
+
+function compareFilterValue(cellValue, filterValue, type) {
+    const rawFilter = String(filterValue || "").trim();
+    if (!rawFilter) return true;
+
+    const rawCell = String(cellValue ?? "").trim();
+    if (type === "number") {
+        const match = rawFilter.match(/^(<=|>=|=|<|>)?\s*(-?\d+(?:\.\d+)?)$/);
+        if (match) {
+            const operator = match[1] || "=";
+            const target = Number(match[2]);
+            const value = Number(rawCell.replace(/%/g, ""));
+            if (Number.isNaN(value)) return false;
+            if (operator === ">") return value > target;
+            if (operator === ">=") return value >= target;
+            if (operator === "<") return value < target;
+            if (operator === "<=") return value <= target;
+            return value === target;
+        }
+    }
+
+    if (type === "date") {
+        const match = rawFilter.match(/^(<=|>=|=|<|>)?\s*(\d{4}-\d{1,2}(?:-\d{1,2})?)$/);
+        if (match && rawCell) {
+            const operator = match[1] || "=";
+            const target = match[2];
+            if (operator === ">") return rawCell > target;
+            if (operator === ">=") return rawCell >= target;
+            if (operator === "<") return rawCell < target;
+            if (operator === "<=") return rawCell <= target;
+            return rawCell.startsWith(target);
+        }
+    }
+
+    return rawCell.toLowerCase().includes(rawFilter.toLowerCase());
+}
+
+function applySectionColumnFilters(tableId) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const filters = Array.from(table.querySelectorAll(".column-filter"));
+    const rows = Array.from(table.querySelectorAll("tbody tr.data-row"));
+
+    rows.forEach(row => {
+        const show = filters.every(input => {
+            const filterValue = input.value;
+            if (!filterValue.trim()) return true;
+            const col = Number(input.dataset.col);
+            const cell = row.cells[col];
+            const cellValue = cell ? (cell.dataset.sortValue ?? cell.textContent) : "";
+            return compareFilterValue(cellValue, filterValue, input.dataset.type || "text");
+        });
+        row.style.display = show ? "" : "none";
+    });
+
+    refreshSectionAverage(tableId);
+}
+
+function clearSectionColumnFilters(tableId) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    table.querySelectorAll(".column-filter").forEach(input => input.value = "");
+    table.querySelectorAll("tbody tr.data-row").forEach(row => row.style.display = "");
+    refreshSectionAverage(tableId);
+}
+
+function sortLaborTable(tableId, columnIndex, type, button) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const tbody = table.querySelector("tbody");
+    const rows = Array.from(tbody.querySelectorAll("tr.data-row"));
+    const currentColumn = table.dataset.sortColumn;
+    const currentDirection = table.dataset.sortDirection || "asc";
+    const nextDirection = currentColumn === String(columnIndex) && currentDirection === "asc" ? "desc" : "asc";
+
+    const getValue = row => {
+        const cell = row.cells[columnIndex];
+        const raw = cell ? (cell.dataset.sortValue ?? cell.textContent) : "";
+        if (type === "number") {
+            const value = Number(String(raw).replace(/%/g, ""));
+            return Number.isNaN(value) ? -Infinity : value;
+        }
+        return String(raw).trim().toLowerCase();
+    };
+
+    rows.sort((a, b) => {
+        const av = getValue(a);
+        const bv = getValue(b);
+        let result = 0;
+        if (type === "number") result = av - bv;
+        else result = av.localeCompare(bv, undefined, {numeric: true, sensitivity: "base"});
+        return nextDirection === "asc" ? result : -result;
+    });
+
+    const averageRow = tbody.querySelector("tr.average-row");
+    rows.forEach(row => tbody.insertBefore(row, averageRow));
+    table.dataset.sortColumn = String(columnIndex);
+    table.dataset.sortDirection = nextDirection;
+
+    table.querySelectorAll(".sort-button").forEach(btn => {
+        btn.setAttribute("aria-sort", "none");
+        const indicator = btn.querySelector(".sort-indicator");
+        if (indicator) indicator.textContent = "";
+    });
+    if (button) {
+        button.setAttribute("aria-sort", nextDirection === "asc" ? "ascending" : "descending");
+        const indicator = button.querySelector(".sort-indicator");
+        if (indicator) indicator.textContent = nextDirection === "asc" ? "▲" : "▼";
+    }
+}
+
+function refreshSectionAverage(tableId) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const allRows = Array.from(table.querySelectorAll("tbody tr.data-row"));
+    const visibleRows = allRows.filter(row => row.style.display !== "none");
+    const countLabel = document.getElementById(tableId + "-count");
+    if (countLabel) countLabel.textContent = `${visibleRows.length} of ${allRows.length} row${allRows.length === 1 ? "" : "s"}`;
+
+    const averageRow = table.querySelector("tr.average-row");
+    if (!averageRow) return;
+    const avgLabel = averageRow.querySelector(".avg-label");
+    const avgActualCell = averageRow.querySelector(".avg-actual");
+    const avgEstimatedCell = averageRow.querySelector(".avg-estimated");
+    const avgVarianceCell = averageRow.querySelector(".avg-variance");
+    const avgEfficiencyCell = averageRow.querySelector(".avg-efficiency");
+
+    if (!visibleRows.length) {
+        allRows.forEach(row => {
+            row.classList.remove("outlier-row");
+            const badge = row.querySelector(".outlier-badge");
+            if (badge) badge.remove();
+        });
+        if (avgLabel) avgLabel.innerHTML = "No rows match column filters";
+        if (avgActualCell) avgActualCell.textContent = "—";
+        if (avgEstimatedCell) avgEstimatedCell.textContent = "—";
+        if (avgVarianceCell) avgVarianceCell.textContent = "—";
+        if (avgEfficiencyCell) avgEfficiencyCell.textContent = "—";
+        return;
+    }
+
+    const variances = visibleRows.map(row => Number(row.dataset.variance)).filter(value => !Number.isNaN(value));
+    let lower = null;
+    let upper = null;
+    if (variances.length > 2) {
+        const mean = variances.reduce((sum, value) => sum + value, 0) / variances.length;
+        const sd = standardDeviation(variances);
+        if (sd > 0) {
+            lower = mean - sd;
+            upper = mean + sd;
+        }
+    }
+
+    let excludedCount = 0;
+    visibleRows.forEach(row => {
+        const variance = Number(row.dataset.variance);
+        const outlier = lower !== null && upper !== null && !Number.isNaN(variance) && (variance < lower || variance > upper);
+        row.classList.toggle("outlier-row", outlier);
+        const jobCell = row.cells[1];
+        const existingBadge = jobCell ? jobCell.querySelector(".outlier-badge") : null;
+        if (outlier) {
+            excludedCount += 1;
+            if (jobCell && !existingBadge) jobCell.insertAdjacentHTML("beforeend", '<span class="outlier-badge">OUTLIER</span>');
+        } else if (existingBadge) {
+            existingBadge.remove();
+        }
+    });
+
+    allRows.filter(row => row.style.display === "none").forEach(row => {
+        row.classList.remove("outlier-row");
+        const badge = row.querySelector(".outlier-badge");
+        if (badge) badge.remove();
+    });
+
+    const averageRows = visibleRows.filter(row => !row.classList.contains("outlier-row"));
+    const actualValues = averageRows.map(row => Number(row.dataset.actual)).filter(value => !Number.isNaN(value));
+    const estimatedValues = averageRows.map(row => Number(row.dataset.estimated)).filter(value => !Number.isNaN(value));
+    const varianceValues = averageRows.map(row => Number(row.dataset.variance)).filter(value => !Number.isNaN(value));
+    const avgActual = actualValues.length ? actualValues.reduce((a, b) => a + b, 0) / actualValues.length : 0;
+    const avgEstimated = estimatedValues.length ? estimatedValues.reduce((a, b) => a + b, 0) / estimatedValues.length : 0;
+    const avgVariance = varianceValues.length ? varianceValues.reduce((a, b) => a + b, 0) / varianceValues.length : 0;
+    const totalActual = actualValues.reduce((a, b) => a + b, 0);
+    const totalEstimated = estimatedValues.reduce((a, b) => a + b, 0);
+    const avgEfficiency = totalActual > 0 ? (totalEstimated / totalActual) * 100 : 0;
+    const title = table.dataset.sectionTitle || "Labor";
+    const outlierText = excludedCount > 0
+        ? `<span class="outlier-note">${excludedCount} outlier${excludedCount === 1 ? "" : "s"} excluded from averages</span>`
+        : "";
+
+    if (avgLabel) avgLabel.innerHTML = `Adjusted ${title} Average ${outlierText}`;
+    if (avgActualCell) avgActualCell.textContent = avgActual.toFixed(2);
+    if (avgEstimatedCell) avgEstimatedCell.textContent = avgEstimated.toFixed(2);
+    if (avgVarianceCell) avgVarianceCell.textContent = avgVariance.toFixed(2);
+    if (avgEfficiencyCell) avgEfficiencyCell.textContent = `${avgEfficiency.toFixed(1)}%`;
+}
+
+function initializeLaborTables() {
+    document.querySelectorAll("table.labor-table").forEach(table => refreshSectionAverage(table.id));
+}
+
+function renderLaborSection(rows, title, sectionId) {
+    if (!rows.length) return "";
+    const safeId = `labor-table-${String(sectionId).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+    const bounds = getVarianceBounds(rows);
+    const averageRows = removeVarianceOutliers(rows);
+    const excludedCount = rows.length - averageRows.length;
+    const avgActual = averageOf(averageRows, "ActualHours");
+    const avgEstimated = averageOf(averageRows, "EstimatedHours");
+    const avgVariance = averageOf(averageRows, "VarianceHours");
+    const avgEfficiency = weightedEfficiency(averageRows);
+    let outlierText = "";
+    if (excludedCount > 0) {
+        outlierText = `<span class="outlier-note">${excludedCount} outlier${excludedCount === 1 ? "" : "s"} excluded from averages</span>`;
+    }
+
+    const columns = [
+        ["Revision", "text", "Filter"],
+        ["Job", "text", "Filter"],
+        ["Date", "date", "YYYY-MM"],
+        ["Employee", "text", "Filter"],
+        ["Entries", "number", ">= 1"],
+        ["Qty", "number", ">= 10"],
+        ["Scrap", "number", "> 0"],
+        ["Actual Hrs", "number", "> 1"],
+        ["Estimated Hrs", "number", "> 1"],
+        ["Variance", "number", "> 0"],
+        ["Efficiency", "number", ">= 85"]
+    ];
+
+    let html = `
+        <div class="labor-section-title">
+            <span>${title}</span>
+            <div class="section-tools">
+                <span class="section-row-count" id="${safeId}-count">${rows.length} of ${rows.length} row${rows.length === 1 ? "" : "s"}</span>
+                <button type="button" class="clear-column-filters" onclick="clearSectionColumnFilters('${safeId}')">Clear column filters</button>
+            </div>
+        </div>
+        <div class="table-wrap"><table class="labor-table" id="${safeId}" data-section-title="${title}">
+        <thead>
+            <tr class="column-head-row">`;
+    columns.forEach((column, index) => {
+        html += `<th><button type="button" class="sort-button" aria-sort="none" onclick="sortLaborTable('${safeId}', ${index}, '${column[1]}', this)">${column[0]}<span class="sort-indicator"></span></button></th>`;
+    });
+    html += `</tr><tr class="filter-row">`;
+    columns.forEach((column, index) => {
+        html += `<th><input class="column-filter" type="text" data-col="${index}" data-type="${column[1]}" placeholder="${column[2]}" oninput="applySectionColumnFilters('${safeId}')" aria-label="Filter ${column[0]}"></th>`;
+    });
+    html += `</tr></thead><tbody>`;
+
+    rows.forEach(row => {
+        const date = row.LaborDate ? row.LaborDate.substring(0, 10) : "";
+        const actualNumber = Number(row.ActualHours || 0);
+        const estimatedNumber = Number(row.EstimatedHours || 0);
+        const varianceNumber = Number(row.VarianceHours || 0);
+        const efficiencyNumber = Number(row.EfficiencyPercent || 0);
+        const actual = actualNumber.toFixed(2);
+        const estimated = estimatedNumber.toFixed(2);
+        const variance = varianceNumber.toFixed(2);
+        const efficiency = efficiencyNumber.toFixed(1);
+        const outlier = isVarianceOutlier(row, bounds);
+        html += `<tr class="data-row${outlier ? " outlier-row" : ""}" data-actual="${actualNumber}" data-estimated="${estimatedNumber}" data-variance="${varianceNumber}">
+            <td data-sort-value="${row.PartRevision || ""}">${row.PartRevision || ""}</td>
+            <td data-sort-value="${row.JobNumber || ""}">${row.JobNumber || ""}${outlier ? '<span class="outlier-badge">OUTLIER</span>' : ""}</td>
+            <td data-sort-value="${date}">${date}</td>
+            <td data-sort-value="${row.EmployeeName || ""}">${row.EmployeeName || ""}</td>
+            <td data-sort-value="${Number(row.EntryCount || 0)}">${Number(row.EntryCount || 0)}</td>
+            <td data-sort-value="${Number(row.QuantityComplete || 0)}">${Number(row.QuantityComplete || 0).toFixed(0)}</td>
+            <td data-sort-value="${Number(row.ScrapQuantity || 0)}">${Number(row.ScrapQuantity || 0).toFixed(0)}</td>
+            <td data-sort-value="${actualNumber}">${actual}</td>
+            <td data-sort-value="${estimatedNumber}">${estimated}</td>
+            <td data-sort-value="${varianceNumber}">${variance}</td>
+            <td data-sort-value="${efficiencyNumber}">${efficiency}%</td>
+        </tr>`;
+    });
+    html += `<tr class="average-row">
+        <td colspan="7" class="avg-label">Adjusted ${title} Average ${outlierText}</td>
+        <td class="avg-actual">${avgActual.toFixed(2)}</td>
+        <td class="avg-estimated">${avgEstimated.toFixed(2)}</td>
+        <td class="avg-variance">${avgVariance.toFixed(2)}</td>
+        <td class="avg-efficiency">${avgEfficiency.toFixed(1)}%</td>
+    </tr></tbody></table></div>`;
+    return html;
+}
+
+function displayResults(data) {
+    const resultsDiv = document.getElementById("results");
+    if (!data.length) {
+        resultsDiv.innerHTML = '<div class="error">No records match the selected filters.</div>';
+        return;
+    }
+    const partNumber = data[0].PartNumber;
+    let html = `<div class="part-header"><strong>Part Number:</strong> ${partNumber}&nbsp;&nbsp;&nbsp;<strong>Combined Labor Records:</strong> ${data.length}</div>`;
+    const operations = {};
+    data.forEach(row => {
+        const operation = row.OperationNumber;
+        if (!operations[operation]) operations[operation] = [];
+        operations[operation].push(row);
+    });
+    const operationNumbers = Object.keys(operations).sort((a, b) => Number(a) - Number(b));
+    operationNumbers.forEach(operationNumber => {
+        const rows = operations[operationNumber];
+        const description = rows[0].OperationDescription || "";
+        const workCenterLabels = [...new Set(rows.map(row => {
+            const id = (row.WorkCenter || "").trim();
+            const name = (row.WorkCenterName || "").trim();
+            if (name && id) return `${name} (WC ${id})`;
+            if (name) return name;
+            if (id) return `Work Center ${id}`;
+            return "";
+        }).filter(Boolean))];
+        const workCenterText = workCenterLabels.join(" / ");
+        const setupRows = rows.filter(row => row.LaborType === "Setup");
+        const productionRows = rows.filter(row => row.LaborType === "Production");
+        const otherRows = rows.filter(row => row.LaborType !== "Setup" && row.LaborType !== "Production");
+        const operationId = String(operationNumber).replace(/[^a-zA-Z0-9]/g, "");
+        const totalActual = totalOf(rows, "ActualHours");
+        const totalEstimated = totalOf(rows, "EstimatedHours");
+        const totalVariance = totalActual - totalEstimated;
+        const setupEfficiency = setupRows.length ? weightedEfficiency(setupRows) : null;
+        const productionEfficiency = productionRows.length ? weightedEfficiency(productionRows) : null;
+        const jobs = uniqueJobs(rows);
+        html += `<div class="operation">
+            <div class="operation-header" onclick="toggleOperation('${operationId}')">
+                <div><div class="operation-number">Operation ${operationNumber}${workCenterText ? `<span class="operation-workcenter">• ${workCenterText}</span>` : ``}</div><div class="operation-description">${description}</div></div>
+                <div class="operation-toggle" id="operation-toggle-${operationId}" onclick="event.stopPropagation();toggleOperation('${operationId}')">+</div>
+            </div>
+            <div class="operation-content collapsed" id="operation-content-${operationId}">
+                <div class="operation-summary">
+                    <div class="operation-summary-card">Jobs<div class="operation-summary-value">${jobs}</div></div>
+                    <div class="operation-summary-card">Actual Hrs<div class="operation-summary-value">${totalActual.toFixed(2)}</div></div>
+                    <div class="operation-summary-card">Estimated Hrs<div class="operation-summary-value">${totalEstimated.toFixed(2)}</div></div>
+                    <div class="operation-summary-card">Variance<div class="operation-summary-value">${totalVariance.toFixed(2)}</div></div>
+                    ${setupEfficiency !== null ? `<div class="operation-summary-card ${efficiencyStatusClass(setupEfficiency)}">Setup Efficiency<div class="operation-summary-value">${setupEfficiency.toFixed(1)}%</div></div>` : ``}
+                    ${productionEfficiency !== null ? `<div class="operation-summary-card ${efficiencyStatusClass(productionEfficiency)}">Production Efficiency<div class="operation-summary-value">${productionEfficiency.toFixed(1)}%</div></div>` : ``}
+                </div>`;
+        html += renderLaborSection(setupRows, "Setup", `${operationId}-setup`);
+        html += renderLaborSection(productionRows, "Production", `${operationId}-production`);
+        if (otherRows.length) html += renderLaborSection(otherRows, "Other Labor", `${operationId}-other`);
+        html += `</div></div>`;
+    });
+    resultsDiv.innerHTML = html;
+    initializeLaborTables();
+}
+
+document.getElementById("partNumber").addEventListener("keydown", function(event) {
+    if (event.key === "Enter") searchPart();
+});
+</script>
+</body>
+</html>
