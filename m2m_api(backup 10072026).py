@@ -352,17 +352,6 @@ def _combine_dashboard_history(rows):
     return combined
 
 
-def _median(values):
-    ordered = sorted(values)
-    count = len(ordered)
-    if count == 0:
-        return 0.0
-    middle = count // 2
-    if count % 2:
-        return ordered[middle]
-    return (ordered[middle - 1] + ordered[middle]) / 2.0
-
-
 def _dashboard_history_summary(rows, labor_type):
     filtered = [row for row in rows if row.get("LaborType") == labor_type]
     if labor_type == "Production":
@@ -372,88 +361,27 @@ def _dashboard_history_summary(rows, labor_type):
         return {
             "Runs": 0,
             "Jobs": 0,
-            "AdjustedRuns": 0,
-            "ExcludedRuns": 0,
-            "Below80Runs": 0,
-            "HighReviewRuns": 0,
-            "StatisticalOutliers": 0,
-            "DataReviewRuns": 0,
             "AvgQuantity": 0.0,
             "AvgActualHours": 0.0,
             "AvgEstimatedHours": 0.0,
             "AvgVarianceHours": 0.0,
             "WeightedEfficiency": 0.0,
-            "RawWeightedEfficiency": 0.0,
         }
 
-    valid_ratio_rows = []
-    ratios = []
-    for row in filtered:
-        actual = _safe_float(row.get("ActualHours"))
-        estimated = _safe_float(row.get("EstimatedHours"))
-        if actual > 0 and estimated > 0:
-            ratio = actual / estimated
-            valid_ratio_rows.append((row, ratio))
-            ratios.append(ratio)
-
-    median_ratio = _median(ratios) if ratios else 0.0
-    deviations = [abs(value - median_ratio) for value in ratios]
-    mad = _median(deviations) if deviations else 0.0
-    use_mad = len(ratios) >= 5 and mad > 0
-
-    adjusted = []
-    below_80 = 0
-    high_review = 0
-    statistical_outliers = 0
-    data_review = 0
-
-    for row in filtered:
-        actual = _safe_float(row.get("ActualHours"))
-        estimated = _safe_float(row.get("EstimatedHours"))
-
-        if actual <= 0 or estimated <= 0:
-            data_review += 1
-            continue
-
-        ratio = actual / estimated
-        modified_z = (0.6745 * (ratio - median_ratio) / mad) if use_mad else 0.0
-
-        if use_mad and abs(modified_z) > 3.5:
-            statistical_outliers += 1
-            continue
-
-        efficiency = (estimated / actual) * 100.0
-        if efficiency < 80.0:
-            below_80 += 1
-        elif ratio <= 0.80:  # at least 20% faster than estimate => >=125% efficiency
-            high_review += 1
-
-        adjusted.append(row)
-
-    raw_actual = sum(_safe_float(row.get("ActualHours")) for row in filtered)
-    raw_estimated = sum(_safe_float(row.get("EstimatedHours")) for row in filtered)
-
-    count = len(adjusted)
-    total_actual = sum(_safe_float(row.get("ActualHours")) for row in adjusted)
-    total_estimated = sum(_safe_float(row.get("EstimatedHours")) for row in adjusted)
-    total_qty = sum(_safe_float(row.get("QuantityComplete")) for row in adjusted)
-    total_variance = sum(_safe_float(row.get("VarianceHours")) for row in adjusted)
+    count = len(filtered)
+    total_actual = sum(_safe_float(row.get("ActualHours")) for row in filtered)
+    total_estimated = sum(_safe_float(row.get("EstimatedHours")) for row in filtered)
+    total_qty = sum(_safe_float(row.get("QuantityComplete")) for row in filtered)
+    total_variance = sum(_safe_float(row.get("VarianceHours")) for row in filtered)
 
     return {
-        "Runs": len(filtered),
+        "Runs": count,
         "Jobs": len({row.get("JobNumber") for row in filtered if row.get("JobNumber")}),
-        "AdjustedRuns": count,
-        "ExcludedRuns": len(filtered) - count,
-        "Below80Runs": below_80,
-        "HighReviewRuns": high_review,
-        "StatisticalOutliers": statistical_outliers,
-        "DataReviewRuns": data_review,
         "AvgQuantity": total_qty / count if count else 0.0,
         "AvgActualHours": total_actual / count if count else 0.0,
         "AvgEstimatedHours": total_estimated / count if count else 0.0,
         "AvgVarianceHours": total_variance / count if count else 0.0,
         "WeightedEfficiency": (total_estimated / total_actual * 100.0) if total_actual > 0 else 0.0,
-        "RawWeightedEfficiency": (raw_estimated / raw_actual * 100.0) if raw_actual > 0 else 0.0,
     }
 
 
@@ -825,28 +753,10 @@ th {
 .column-filter::placeholder { color: #91a0ae; }
 td { padding: 9px; border-bottom: 1px solid #e8edf2; white-space: nowrap; font-size: 13px; }
 .no-section-results td { text-align: center; color: var(--muted); font-style: italic; padding: 14px; }
-tbody tr:nth-child(even):not(.average-row):not(.raw-average-row):not(.adjusted-average-row):not(.analysis-below-row):not(.analysis-high-row):not(.analysis-outlier-row):not(.analysis-data-row) { background: #fbfcfd; }
+tbody tr:nth-child(even):not(.average-row) { background: #fbfcfd; }
 tbody tr:hover:not(.average-row) { background: #f0f5fa; }
 .average-row { background: #e9f0f7; font-weight: 800; }
 .average-row td { padding: 10px 9px; border-top: 2px solid #b8c9d9; }
-.raw-average-row { background: #f3f6f9; font-weight: 800; }
-.raw-average-row td { padding: 10px 9px; border-top: 2px solid #cfd8e1; }
-.adjusted-average-row { background: #e9f0f7; font-weight: 800; }
-.adjusted-average-row td { padding: 10px 9px; border-top: 1px solid #b8c9d9; }
-.analysis-below-row { background: #fff1f1 !important; }
-.analysis-high-row { background: #eef7ff !important; }
-.analysis-outlier-row { background: #fff4cf !important; }
-.analysis-data-row { background: #f3f0f7 !important; }
-.status-badge {
-    display: inline-block; padding: 3px 7px; border-radius: 999px; font-size: 10px;
-    font-weight: 800; letter-spacing: .2px; white-space: nowrap;
-}
-.status-normal { background: #eef2f6; color: #536273; }
-.status-below { background: #f4c7c7; color: #842626; }
-.status-high { background: #cfe5f8; color: #1e537f; }
-.status-outlier { background: #f3c85b; color: #5f4700; }
-.status-data { background: #ddd4ea; color: #563c72; }
-.analysis-note { font-size: 11px; font-weight: 600; color: #6d7782; margin-left: 8px; }
 .error, .loading {
     background: white; border: 1px solid var(--line); box-shadow: var(--shadow);
     padding: 16px 18px; border-radius: 10px; margin-bottom: 16px;
@@ -1092,75 +1002,6 @@ function uniqueJobs(rows) {
     return new Set(rows.map(row => row.JobNumber)).size;
 }
 
-function median(values) {
-    const nums = values.filter(Number.isFinite).slice().sort((a, b) => a - b);
-    if (!nums.length) return 0;
-    const middle = Math.floor(nums.length / 2);
-    return nums.length % 2 ? nums[middle] : (nums[middle - 1] + nums[middle]) / 2;
-}
-
-function robustRatioStatsFromDomRows(rows) {
-    const ratios = rows.map(row => {
-        const actual = Number(row.dataset.actual);
-        const estimated = Number(row.dataset.estimated);
-        return (Number.isFinite(actual) && Number.isFinite(estimated) && actual > 0 && estimated > 0)
-            ? actual / estimated
-            : NaN;
-    }).filter(Number.isFinite);
-
-    const center = median(ratios);
-    const deviations = ratios.map(value => Math.abs(value - center));
-    const mad = median(deviations);
-    return {
-        median: center,
-        mad: mad,
-        enabled: ratios.length >= 5 && mad > 0
-    };
-}
-
-function classifyLaborDomRow(row, stats) {
-    const actual = Number(row.dataset.actual);
-    const estimated = Number(row.dataset.estimated);
-    const efficiency = Number(row.dataset.efficiency);
-
-    if (!Number.isFinite(actual) || !Number.isFinite(estimated) || actual <= 0 || estimated <= 0) {
-        return {key: "data", label: "DATA REVIEW", exclude: true};
-    }
-
-    const ratio = actual / estimated;
-    if (stats.enabled) {
-        const modifiedZ = 0.6745 * (ratio - stats.median) / stats.mad;
-        if (Math.abs(modifiedZ) > 3.5) {
-            return {key: "outlier", label: "STAT OUTLIER", exclude: true};
-        }
-    }
-
-    if (Number.isFinite(efficiency) && efficiency < 80) {
-        return {key: "below", label: "BELOW 80%", exclude: false};
-    }
-
-    if (ratio <= 0.80) {
-        return {key: "high", label: "HIGH PERF REVIEW", exclude: false};
-    }
-
-    return {key: "normal", label: "NORMAL", exclude: false};
-}
-
-function statusBadge(status) {
-    return `<span class="status-badge status-${status.key}">${status.label}</span>`;
-}
-
-function averageDomField(rows, datasetField) {
-    const values = rows.map(row => Number(row.dataset[datasetField])).filter(Number.isFinite);
-    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-}
-
-function weightedEfficiencyDom(rows) {
-    const totalActual = rows.reduce((sum, row) => sum + (Number(row.dataset.actual) || 0), 0);
-    const totalEstimated = rows.reduce((sum, row) => sum + (Number(row.dataset.estimated) || 0), 0);
-    return totalActual > 0 ? (totalEstimated / totalActual) * 100 : 0;
-}
-
 function buildSummaryCards(rows, title) {
     const jobs = uniqueJobs(rows);
     const totalActual = totalOf(rows, "ActualHours");
@@ -1308,7 +1149,7 @@ function sortLaborTable(tableId, columnIndex, type, button) {
         return nextDirection === "asc" ? result : -result;
     });
 
-    const averageRow = tbody.querySelector("tr.raw-average-row");
+    const averageRow = tbody.querySelector("tr.average-row");
     rows.forEach(row => tbody.insertBefore(row, averageRow));
     table.dataset.sortColumn = String(columnIndex);
     table.dataset.sortDirection = nextDirection;
@@ -1328,95 +1169,45 @@ function sortLaborTable(tableId, columnIndex, type, button) {
 function refreshSectionAverage(tableId) {
     const table = document.getElementById(tableId);
     if (!table) return;
-
     const allRows = Array.from(table.querySelectorAll("tbody tr.data-row"));
-    const stats = robustRatioStatsFromDomRows(allRows);
-
-    let belowCount = 0;
-    let highCount = 0;
-    let outlierCount = 0;
-    let dataReviewCount = 0;
-
-    allRows.forEach(row => {
-        const status = classifyLaborDomRow(row, stats);
-        row.dataset.analysisStatus = status.key;
-        row.dataset.excludeAdjusted = status.exclude ? "1" : "0";
-        row.classList.remove("analysis-below-row", "analysis-high-row", "analysis-outlier-row", "analysis-data-row");
-
-        if (status.key === "below") {
-            row.classList.add("analysis-below-row");
-            belowCount += 1;
-        } else if (status.key === "high") {
-            row.classList.add("analysis-high-row");
-            highCount += 1;
-        } else if (status.key === "outlier") {
-            row.classList.add("analysis-outlier-row");
-            outlierCount += 1;
-        } else if (status.key === "data") {
-            row.classList.add("analysis-data-row");
-            dataReviewCount += 1;
-        }
-
-        const statusCell = row.querySelector(".analysis-status");
-        if (statusCell) {
-            statusCell.dataset.sortValue = status.label;
-            statusCell.innerHTML = statusBadge(status);
-        }
-    });
-
     const visibleRows = allRows.filter(row => row.style.display !== "none");
-    const adjustedRows = visibleRows.filter(row => row.dataset.excludeAdjusted !== "1");
-
     const countLabel = document.getElementById(tableId + "-count");
-    if (countLabel) {
-        countLabel.textContent = `${visibleRows.length} of ${allRows.length} row${allRows.length === 1 ? "" : "s"}`;
-    }
+    if (countLabel) countLabel.textContent = `${visibleRows.length} of ${allRows.length} row${allRows.length === 1 ? "" : "s"}`;
 
-    const rawRow = table.querySelector("tr.raw-average-row");
-    const adjustedRow = table.querySelector("tr.adjusted-average-row");
-    if (!rawRow || !adjustedRow) return;
-
-    const title = table.dataset.sectionTitle || "Labor";
+    const averageRow = table.querySelector("tr.average-row");
+    if (!averageRow) return;
+    const avgLabel = averageRow.querySelector(".avg-label");
+    const avgActualCell = averageRow.querySelector(".avg-actual");
+    const avgEstimatedCell = averageRow.querySelector(".avg-estimated");
+    const avgVarianceCell = averageRow.querySelector(".avg-variance");
+    const avgEfficiencyCell = averageRow.querySelector(".avg-efficiency");
 
     if (!visibleRows.length) {
-        rawRow.querySelector(".avg-label").innerHTML = "No rows match column filters";
-        adjustedRow.querySelector(".avg-label").innerHTML = "No rows match column filters";
-        [rawRow, adjustedRow].forEach(summaryRow => {
-            summaryRow.querySelector(".avg-actual").textContent = "—";
-            summaryRow.querySelector(".avg-estimated").textContent = "—";
-            summaryRow.querySelector(".avg-variance").textContent = "—";
-            summaryRow.querySelector(".avg-efficiency").textContent = "—";
-        });
+        if (avgLabel) avgLabel.innerHTML = "No rows match column filters";
+        if (avgActualCell) avgActualCell.textContent = "—";
+        if (avgEstimatedCell) avgEstimatedCell.textContent = "—";
+        if (avgVarianceCell) avgVarianceCell.textContent = "—";
+        if (avgEfficiencyCell) avgEfficiencyCell.textContent = "—";
         return;
     }
 
-    const setSummary = (summaryRow, rows, label) => {
-        const avgActual = averageDomField(rows, "actual");
-        const avgEstimated = averageDomField(rows, "estimated");
-        const avgVariance = averageDomField(rows, "variance");
-        const efficiency = weightedEfficiencyDom(rows);
+    const actualValues = visibleRows.map(row => Number(row.dataset.actual)).filter(value => !Number.isNaN(value));
+    const estimatedValues = visibleRows.map(row => Number(row.dataset.estimated)).filter(value => !Number.isNaN(value));
+    const varianceValues = visibleRows.map(row => Number(row.dataset.variance)).filter(value => !Number.isNaN(value));
 
-        summaryRow.querySelector(".avg-label").innerHTML = label;
-        summaryRow.querySelector(".avg-actual").textContent = rows.length ? avgActual.toFixed(2) : "—";
-        summaryRow.querySelector(".avg-estimated").textContent = rows.length ? avgEstimated.toFixed(2) : "—";
-        summaryRow.querySelector(".avg-variance").textContent = rows.length ? avgVariance.toFixed(2) : "—";
-        summaryRow.querySelector(".avg-efficiency").textContent = rows.length ? `${efficiency.toFixed(1)}%` : "—";
-    };
+    const avgActual = actualValues.length ? actualValues.reduce((a, b) => a + b, 0) / actualValues.length : 0;
+    const avgEstimated = estimatedValues.length ? estimatedValues.reduce((a, b) => a + b, 0) / estimatedValues.length : 0;
+    const avgVariance = varianceValues.length ? varianceValues.reduce((a, b) => a + b, 0) / varianceValues.length : 0;
+    const totalActual = actualValues.reduce((a, b) => a + b, 0);
+    const totalEstimated = estimatedValues.reduce((a, b) => a + b, 0);
+    const avgEfficiency = totalActual > 0 ? (totalEstimated / totalActual) * 100 : 0;
+    const title = table.dataset.sectionTitle || "Labor";
 
-    setSummary(rawRow, visibleRows, `Raw ${title} Average`);
-
-    const excludedVisible = visibleRows.length - adjustedRows.length;
-    const adjustedNote = `<span class="analysis-note">${adjustedRows.length} of ${visibleRows.length} used • ${excludedVisible} excluded</span>`;
-    setSummary(adjustedRow, adjustedRows, `Adjusted ${title} Average ${adjustedNote}`);
-
-    const analysisLabel = document.getElementById(tableId + "-analysis");
-    if (analysisLabel) {
-        analysisLabel.innerHTML =
-            `<strong>${belowCount}</strong> below 80% • ` +
-            `<strong>${highCount}</strong> high-performance review • ` +
-            `<strong>${outlierCount}</strong> statistical outlier${outlierCount === 1 ? "" : "s"} • ` +
-            `<strong>${dataReviewCount}</strong> data review`;
-    }
+    if (avgLabel) avgLabel.innerHTML = `${title} Average`;
+    if (avgActualCell) avgActualCell.textContent = avgActual.toFixed(2);
+    if (avgEstimatedCell) avgEstimatedCell.textContent = avgEstimated.toFixed(2);
+    if (avgVarianceCell) avgVarianceCell.textContent = avgVariance.toFixed(2);
+    if (avgEfficiencyCell) avgEfficiencyCell.textContent = `${avgEfficiency.toFixed(1)}%`;
 }
 
 function initializeLaborTables() {
@@ -1426,6 +1217,10 @@ function initializeLaborTables() {
 function renderLaborSection(rows, title, sectionId) {
     if (!rows.length) return "";
     const safeId = `labor-table-${String(sectionId).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+    const avgActual = averageOf(rows, "ActualHours");
+    const avgEstimated = averageOf(rows, "EstimatedHours");
+    const avgVariance = averageOf(rows, "VarianceHours");
+    const avgEfficiency = weightedEfficiency(rows);
 
     const columns = [
         ["Revision", "text", "Filter"],
@@ -1438,17 +1233,12 @@ function renderLaborSection(rows, title, sectionId) {
         ["Actual Hrs", "number", "> 1"],
         ["Estimated Hrs", "number", "> 1"],
         ["Variance", "number", "> 0"],
-        ["Efficiency", "number", ">= 80"],
-        ["Status", "text", "Filter"]
+        ["Efficiency", "number", ">= 85"]
     ];
 
     let html = `
         <div class="labor-section-title">
-            <span>${title}
-                <span class="analysis-note" id="${safeId}-analysis">
-                    Analysis: &lt;80% = performance review • ≥125% = high-performance review • MAD |Z| &gt; 3.5 = statistical outlier
-                </span>
-            </span>
+            <span>${title}</span>
             <div class="section-tools">
                 <span class="section-row-count" id="${safeId}-count">${rows.length} of ${rows.length} row${rows.length === 1 ? "" : "s"}</span>
                 <button type="button" class="clear-column-filters" onclick="clearSectionColumnFilters('${safeId}')">Clear column filters</button>
@@ -1457,11 +1247,9 @@ function renderLaborSection(rows, title, sectionId) {
         <div class="table-wrap"><table class="labor-table" id="${safeId}" data-section-title="${title}">
         <thead>
             <tr class="column-head-row">`;
-
     columns.forEach((column, index) => {
         html += `<th><button type="button" class="sort-button" aria-sort="none" onclick="sortLaborTable('${safeId}', ${index}, '${column[1]}', this)">${column[0]}<span class="sort-indicator"></span></button></th>`;
     });
-
     html += `</tr><tr class="filter-row">`;
     columns.forEach((column, index) => {
         html += `<th><input class="column-filter" type="text" data-col="${index}" data-type="${column[1]}" placeholder="${column[2]}" oninput="applySectionColumnFilters('${safeId}')" aria-label="Filter ${column[0]}"></th>`;
@@ -1474,12 +1262,11 @@ function renderLaborSection(rows, title, sectionId) {
         const estimatedNumber = Number(row.EstimatedHours || 0);
         const varianceNumber = Number(row.VarianceHours || 0);
         const efficiencyNumber = Number(row.EfficiencyPercent || 0);
-
-        html += `<tr class="data-row"
-            data-actual="${actualNumber}"
-            data-estimated="${estimatedNumber}"
-            data-variance="${varianceNumber}"
-            data-efficiency="${efficiencyNumber}">
+        const actual = actualNumber.toFixed(2);
+        const estimated = estimatedNumber.toFixed(2);
+        const variance = varianceNumber.toFixed(2);
+        const efficiency = efficiencyNumber.toFixed(1);
+        html += `<tr class="data-row" data-actual="${actualNumber}" data-estimated="${estimatedNumber}" data-variance="${varianceNumber}" data-efficiency="${efficiencyNumber}">
             <td data-sort-value="${row.PartRevision || ""}">${row.PartRevision || ""}</td>
             <td data-sort-value="${row.JobNumber || ""}">${row.JobNumber || ""}</td>
             <td data-sort-value="${date}">${date}</td>
@@ -1487,33 +1274,19 @@ function renderLaborSection(rows, title, sectionId) {
             <td data-sort-value="${Number(row.EntryCount || 0)}">${Number(row.EntryCount || 0)}</td>
             <td data-sort-value="${Number(row.QuantityComplete || 0)}">${Number(row.QuantityComplete || 0).toFixed(0)}</td>
             <td data-sort-value="${Number(row.ScrapQuantity || 0)}">${Number(row.ScrapQuantity || 0).toFixed(0)}</td>
-            <td data-sort-value="${actualNumber}">${actualNumber.toFixed(2)}</td>
-            <td data-sort-value="${estimatedNumber}">${estimatedNumber.toFixed(2)}</td>
-            <td data-sort-value="${varianceNumber}">${varianceNumber.toFixed(2)}</td>
-            <td data-sort-value="${efficiencyNumber}">${efficiencyNumber.toFixed(1)}%</td>
-            <td class="analysis-status" data-sort-value=""></td>
+            <td data-sort-value="${actualNumber}">${actual}</td>
+            <td data-sort-value="${estimatedNumber}">${estimated}</td>
+            <td data-sort-value="${varianceNumber}">${variance}</td>
+            <td data-sort-value="${efficiencyNumber}">${efficiency}%</td>
         </tr>`;
     });
-
-    html += `
-        <tr class="raw-average-row">
-            <td colspan="7" class="avg-label">Raw ${title} Average</td>
-            <td class="avg-actual"></td>
-            <td class="avg-estimated"></td>
-            <td class="avg-variance"></td>
-            <td class="avg-efficiency"></td>
-            <td></td>
-        </tr>
-        <tr class="adjusted-average-row">
-            <td colspan="7" class="avg-label">Adjusted ${title} Average</td>
-            <td class="avg-actual"></td>
-            <td class="avg-estimated"></td>
-            <td class="avg-variance"></td>
-            <td class="avg-efficiency"></td>
-            <td></td>
-        </tr>
-    </tbody></table></div>`;
-
+    html += `<tr class="average-row">
+        <td colspan="7" class="avg-label">${title} Average</td>
+        <td class="avg-actual">${avgActual.toFixed(2)}</td>
+        <td class="avg-estimated">${avgEstimated.toFixed(2)}</td>
+        <td class="avg-variance">${avgVariance.toFixed(2)}</td>
+        <td class="avg-efficiency">${avgEfficiency.toFixed(1)}%</td>
+    </tr></tbody></table></div>`;
     return html;
 }
 
@@ -1731,7 +1504,7 @@ button:hover { filter: brightness(.96); }
 .history-card.setup { border-top: 4px solid #8a97a5; }
 .history-title { font-size: 11px; font-weight: 900; color: var(--navy); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .history-title small { color: var(--muted); font-weight: 700; font-size: 9px; }
-.history-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 5px; }
+.history-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
 .hist-stat { background: white; border: 1px solid var(--line); border-radius: 7px; padding: 6px 5px; text-align: center; min-width: 0; }
 .hist-value { font-size: 15px; font-weight: 900; margin-top: 2px; color: var(--navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hist-stat.eff-good { background: var(--good-bg); border-color: var(--good-line); }
@@ -1871,32 +1644,22 @@ function historyCard(summary, type) {
         </div>`;
     }
 
-    const adjustedRuns = safeNumber(summary.AdjustedRuns);
-    const excluded = safeNumber(summary.ExcludedRuns);
     const avgQty = safeNumber(summary.AvgQuantity);
     const avgActual = safeNumber(summary.AvgActualHours);
     const avgEstimated = safeNumber(summary.AvgEstimatedHours);
     const efficiency = safeNumber(summary.WeightedEfficiency);
-    const rawEfficiency = safeNumber(summary.RawWeightedEfficiency);
     const quantityBlock = type === 'Production'
         ? `<div class="hist-stat"><div class="label">Avg Qty</div><div class="hist-value">${avgQty.toFixed(1)}</div></div>`
         : `<div class="hist-stat"><div class="label">Jobs</div><div class="hist-value">${safeNumber(summary.Jobs).toFixed(0)}</div></div>`;
 
     return `<div class="history-card ${type.toLowerCase()}">
-        <div class="history-title">${type} History <small>${adjustedRuns.toFixed(0)} of ${runs.toFixed(0)} used • ${excluded.toFixed(0)} excluded</small></div>
+        <div class="history-title">${type} History <small>${runs.toFixed(0)} runs used</small></div>
         <div class="history-stats">
             <div class="hist-stat"><div class="label">Runs</div><div class="hist-value">${runs.toFixed(0)}</div></div>
             ${quantityBlock}
             <div class="hist-stat"><div class="label">Avg Actual</div><div class="hist-value">${avgActual.toFixed(2)}h</div></div>
             <div class="hist-stat"><div class="label">Avg Est.</div><div class="hist-value">${avgEstimated.toFixed(2)}h</div></div>
-            <div class="hist-stat ${efficiencyClass(efficiency)}"><div class="label">Adjusted Eff.</div><div class="hist-value">${efficiency.toFixed(1)}%</div></div>
-            <div class="hist-stat"><div class="label">Raw Eff.</div><div class="hist-value">${rawEfficiency.toFixed(1)}%</div></div>
-        </div>
-        <div class="no-history" style="margin-top:6px">
-            ${safeNumber(summary.Below80Runs).toFixed(0)} below 80% •
-            ${safeNumber(summary.HighReviewRuns).toFixed(0)} high review •
-            ${safeNumber(summary.StatisticalOutliers).toFixed(0)} stat outlier •
-            ${safeNumber(summary.DataReviewRuns).toFixed(0)} data review
+            <div class="hist-stat ${efficiencyClass(efficiency)}"><div class="label">Efficiency</div><div class="hist-value">${efficiency.toFixed(1)}%</div></div>
         </div>
     </div>`;
 }
@@ -1905,7 +1668,7 @@ function renderOperationHistory(job) {
     return `<div class="operation-history">
         <div class="operation-history-heading">
             <div class="operation-history-title">Current Operation Average Labor History</div>
-            <div class="operation-history-note">Same part revision + operation • adjusted average excludes MAD statistical outliers and invalid-hour records</div>
+            <div class="operation-history-note">Same part revision + operation • all qualifying labor runs included</div>
         </div>
         <div class="history-wrap">
             ${historyCard(job.HistoricalProduction || {}, 'Production')}
@@ -2216,7 +1979,7 @@ button:hover { filter: brightness(.96); }
 .history-card.setup { border-top: 4px solid #8a97a5; }
 .history-title { font-size: 12px; font-weight: 900; color: var(--navy); margin-bottom: 7px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .history-title small { color: var(--muted); font-weight: 700; }
-.history-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 5px; }
+.history-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
 .hist-stat { background: white; border: 1px solid var(--line); border-radius: 7px; padding: 6px; text-align: center; min-width: 0; }
 .hist-value { font-size: 15px; font-weight: 900; margin-top: 2px; color: var(--navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hist-stat.eff-good { background: var(--good-bg); border-color: var(--good-line); }
@@ -2264,7 +2027,7 @@ button:hover { filter: brightness(.96); }
     <div id="summaryArea"></div>
     <div id="statusArea" class="status">Loading live jobs...</div>
     <div id="jobsGrid" class="jobs-grid"></div>
-    <div class="footer">Historical adjusted averages exclude MAD statistical outliers and invalid-hour records • Internal use</div>
+    <div class="footer">Historical averages include all qualifying labor runs • Internal use</div>
 </main>
 <script>
 let dashboardJobs = [];
@@ -2350,27 +2113,22 @@ function applyDashboardFilters() {
 function historyCard(summary, type) {
     const runs = safeNumber(summary?.Runs);
     if (!runs) return `<div class="history-card ${type.toLowerCase()}"><div class="history-title">${type} History <small>No prior history</small></div><div class="no-history">No comparable ${type.toLowerCase()} labor history for this part revision and operation.</div></div>`;
-    const adjustedRuns = safeNumber(summary.AdjustedRuns);
-    const excluded = safeNumber(summary.ExcludedRuns);
     const avgQty = safeNumber(summary.AvgQuantity);
     const avgActual = safeNumber(summary.AvgActualHours);
     const avgEstimated = safeNumber(summary.AvgEstimatedHours);
     const efficiency = safeNumber(summary.WeightedEfficiency);
-    const rawEfficiency = safeNumber(summary.RawWeightedEfficiency);
     const quantityBlock = type === 'Production'
         ? `<div class="hist-stat"><div class="label">Avg Qty</div><div class="hist-value">${avgQty.toFixed(1)}</div></div>`
         : `<div class="hist-stat"><div class="label">Jobs</div><div class="hist-value">${safeNumber(summary.Jobs).toFixed(0)}</div></div>`;
     return `<div class="history-card ${type.toLowerCase()}">
-        <div class="history-title">${type} History <small>${adjustedRuns.toFixed(0)} of ${runs.toFixed(0)} used • ${excluded.toFixed(0)} excluded</small></div>
+        <div class="history-title">${type} History <small>${runs.toFixed(0)} runs used</small></div>
         <div class="history-stats">
             <div class="hist-stat"><div class="label">Runs</div><div class="hist-value">${runs.toFixed(0)}</div></div>
             ${quantityBlock}
             <div class="hist-stat"><div class="label">Avg Actual</div><div class="hist-value">${avgActual.toFixed(2)}h</div></div>
             <div class="hist-stat"><div class="label">Avg Est.</div><div class="hist-value">${avgEstimated.toFixed(2)}h</div></div>
-            <div class="hist-stat ${efficiencyClass(efficiency)}"><div class="label">Adjusted Eff.</div><div class="hist-value">${efficiency.toFixed(1)}%</div></div>
-            <div class="hist-stat"><div class="label">Raw Eff.</div><div class="hist-value">${rawEfficiency.toFixed(1)}%</div></div>
+            <div class="hist-stat ${efficiencyClass(efficiency)}"><div class="label">Efficiency</div><div class="hist-value">${efficiency.toFixed(1)}%</div></div>
         </div>
-        <div class="no-history" style="margin-top:6px">${safeNumber(summary.Below80Runs).toFixed(0)} below 80% • ${safeNumber(summary.HighReviewRuns).toFixed(0)} high review • ${safeNumber(summary.StatisticalOutliers).toFixed(0)} stat outlier • ${safeNumber(summary.DataReviewRuns).toFixed(0)} data review</div>
     </div>`;
 }
 
