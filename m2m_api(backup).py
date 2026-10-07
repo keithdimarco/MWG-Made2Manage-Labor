@@ -1,10 +1,10 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 import pyodbc
+import math
 
 
 app = FastAPI()
-
 
 
 def get_connection():
@@ -361,6 +361,7 @@ def _dashboard_history_summary(rows, labor_type):
         return {
             "Runs": 0,
             "Jobs": 0,
+            "AdjustedRuns": 0,
             "AvgQuantity": 0.0,
             "AvgActualHours": 0.0,
             "AvgEstimatedHours": 0.0,
@@ -368,15 +369,32 @@ def _dashboard_history_summary(rows, labor_type):
             "WeightedEfficiency": 0.0,
         }
 
-    count = len(filtered)
-    total_actual = sum(_safe_float(row.get("ActualHours")) for row in filtered)
-    total_estimated = sum(_safe_float(row.get("EstimatedHours")) for row in filtered)
-    total_qty = sum(_safe_float(row.get("QuantityComplete")) for row in filtered)
-    total_variance = sum(_safe_float(row.get("VarianceHours")) for row in filtered)
+    adjusted = filtered
+    if len(filtered) > 2:
+        variances = [_safe_float(row.get("VarianceHours")) for row in filtered]
+        mean = sum(variances) / len(variances)
+        variance = sum((value - mean) ** 2 for value in variances) / len(variances)
+        sd = math.sqrt(variance)
+        if sd > 0:
+            lower = mean - sd
+            upper = mean + sd
+            adjusted = [
+                row for row in filtered
+                if lower <= _safe_float(row.get("VarianceHours")) <= upper
+            ]
+            if not adjusted:
+                adjusted = filtered
+
+    count = len(adjusted)
+    total_actual = sum(_safe_float(row.get("ActualHours")) for row in adjusted)
+    total_estimated = sum(_safe_float(row.get("EstimatedHours")) for row in adjusted)
+    total_qty = sum(_safe_float(row.get("QuantityComplete")) for row in adjusted)
+    total_variance = sum(_safe_float(row.get("VarianceHours")) for row in adjusted)
 
     return {
-        "Runs": count,
+        "Runs": len(filtered),
         "Jobs": len({row.get("JobNumber") for row in filtered if row.get("JobNumber")}),
+        "AdjustedRuns": count,
         "AvgQuantity": total_qty / count if count else 0.0,
         "AvgActualHours": total_actual / count if count else 0.0,
         "AvgEstimatedHours": total_estimated / count if count else 0.0,
@@ -753,10 +771,17 @@ th {
 .column-filter::placeholder { color: #91a0ae; }
 td { padding: 9px; border-bottom: 1px solid #e8edf2; white-space: nowrap; font-size: 13px; }
 .no-section-results td { text-align: center; color: var(--muted); font-style: italic; padding: 14px; }
-tbody tr:nth-child(even):not(.average-row) { background: #fbfcfd; }
+tbody tr:nth-child(even):not(.average-row):not(.outlier-row) { background: #fbfcfd; }
 tbody tr:hover:not(.average-row) { background: #f0f5fa; }
 .average-row { background: #e9f0f7; font-weight: 800; }
 .average-row td { padding: 10px 9px; border-top: 2px solid #b8c9d9; }
+.outlier-row { background: var(--warning) !important; }
+.outlier-row:hover { background: #ffedaf !important; }
+.outlier-badge {
+    font-size: 10px; font-weight: 800; margin-left: 6px; padding: 3px 6px;
+    border-radius: 999px; background: #f3c85b; color: #5f4700;
+}
+.outlier-note { font-size: 11px; font-weight: 600; color: #6d7782; margin-left: 8px; }
 .error, .loading {
     background: white; border: 1px solid var(--line); box-shadow: var(--shadow);
     padding: 16px 18px; border-radius: 10px; margin-bottom: 16px;
@@ -1002,6 +1027,35 @@ function uniqueJobs(rows) {
     return new Set(rows.map(row => row.JobNumber)).size;
 }
 
+function standardDeviation(values) {
+    if (values.length <= 1) return 0;
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance = values.map(value => Math.pow(value - mean, 2)).reduce((sum, value) => sum + value, 0) / values.length;
+    return Math.sqrt(variance);
+}
+
+function getVarianceBounds(rows) {
+    if (rows.length <= 2) return {mean: 0, sd: 0, lower: null, upper: null};
+    const variances = rows.map(row => Number(row.VarianceHours)).filter(value => !isNaN(value));
+    if (variances.length <= 2) return {mean: 0, sd: 0, lower: null, upper: null};
+    const mean = variances.reduce((sum, value) => sum + value, 0) / variances.length;
+    const sd = standardDeviation(variances);
+    if (sd === 0) return {mean: mean, sd: 0, lower: null, upper: null};
+    return {mean: mean, sd: sd, lower: mean - sd, upper: mean + sd};
+}
+
+function isVarianceOutlier(row, bounds) {
+    if (bounds.lower === null || bounds.upper === null) return false;
+    const variance = Number(row.VarianceHours);
+    if (isNaN(variance)) return false;
+    return variance < bounds.lower || variance > bounds.upper;
+}
+
+function removeVarianceOutliers(rows) {
+    const bounds = getVarianceBounds(rows);
+    return rows.filter(row => !isVarianceOutlier(row, bounds));
+}
+
 function buildSummaryCards(rows, title) {
     const jobs = uniqueJobs(rows);
     const totalActual = totalOf(rows, "ActualHours");
@@ -1183,6 +1237,11 @@ function refreshSectionAverage(tableId) {
     const avgEfficiencyCell = averageRow.querySelector(".avg-efficiency");
 
     if (!visibleRows.length) {
+        allRows.forEach(row => {
+            row.classList.remove("outlier-row");
+            const badge = row.querySelector(".outlier-badge");
+            if (badge) badge.remove();
+        });
         if (avgLabel) avgLabel.innerHTML = "No rows match column filters";
         if (avgActualCell) avgActualCell.textContent = "—";
         if (avgEstimatedCell) avgEstimatedCell.textContent = "—";
@@ -1191,10 +1250,43 @@ function refreshSectionAverage(tableId) {
         return;
     }
 
-    const actualValues = visibleRows.map(row => Number(row.dataset.actual)).filter(value => !Number.isNaN(value));
-    const estimatedValues = visibleRows.map(row => Number(row.dataset.estimated)).filter(value => !Number.isNaN(value));
-    const varianceValues = visibleRows.map(row => Number(row.dataset.variance)).filter(value => !Number.isNaN(value));
+    const variances = visibleRows.map(row => Number(row.dataset.variance)).filter(value => !Number.isNaN(value));
+    let lower = null;
+    let upper = null;
+    if (variances.length > 2) {
+        const mean = variances.reduce((sum, value) => sum + value, 0) / variances.length;
+        const sd = standardDeviation(variances);
+        if (sd > 0) {
+            lower = mean - sd;
+            upper = mean + sd;
+        }
+    }
 
+    let excludedCount = 0;
+    visibleRows.forEach(row => {
+        const variance = Number(row.dataset.variance);
+        const outlier = lower !== null && upper !== null && !Number.isNaN(variance) && (variance < lower || variance > upper);
+        row.classList.toggle("outlier-row", outlier);
+        const jobCell = row.cells[1];
+        const existingBadge = jobCell ? jobCell.querySelector(".outlier-badge") : null;
+        if (outlier) {
+            excludedCount += 1;
+            if (jobCell && !existingBadge) jobCell.insertAdjacentHTML("beforeend", '<span class="outlier-badge">OUTLIER</span>');
+        } else if (existingBadge) {
+            existingBadge.remove();
+        }
+    });
+
+    allRows.filter(row => row.style.display === "none").forEach(row => {
+        row.classList.remove("outlier-row");
+        const badge = row.querySelector(".outlier-badge");
+        if (badge) badge.remove();
+    });
+
+    const averageRows = visibleRows.filter(row => !row.classList.contains("outlier-row"));
+    const actualValues = averageRows.map(row => Number(row.dataset.actual)).filter(value => !Number.isNaN(value));
+    const estimatedValues = averageRows.map(row => Number(row.dataset.estimated)).filter(value => !Number.isNaN(value));
+    const varianceValues = averageRows.map(row => Number(row.dataset.variance)).filter(value => !Number.isNaN(value));
     const avgActual = actualValues.length ? actualValues.reduce((a, b) => a + b, 0) / actualValues.length : 0;
     const avgEstimated = estimatedValues.length ? estimatedValues.reduce((a, b) => a + b, 0) / estimatedValues.length : 0;
     const avgVariance = varianceValues.length ? varianceValues.reduce((a, b) => a + b, 0) / varianceValues.length : 0;
@@ -1202,8 +1294,11 @@ function refreshSectionAverage(tableId) {
     const totalEstimated = estimatedValues.reduce((a, b) => a + b, 0);
     const avgEfficiency = totalActual > 0 ? (totalEstimated / totalActual) * 100 : 0;
     const title = table.dataset.sectionTitle || "Labor";
+    const outlierText = excludedCount > 0
+        ? `<span class="outlier-note">${excludedCount} outlier${excludedCount === 1 ? "" : "s"} excluded from averages</span>`
+        : "";
 
-    if (avgLabel) avgLabel.innerHTML = `${title} Average`;
+    if (avgLabel) avgLabel.innerHTML = `Adjusted ${title} Average ${outlierText}`;
     if (avgActualCell) avgActualCell.textContent = avgActual.toFixed(2);
     if (avgEstimatedCell) avgEstimatedCell.textContent = avgEstimated.toFixed(2);
     if (avgVarianceCell) avgVarianceCell.textContent = avgVariance.toFixed(2);
@@ -1217,10 +1312,17 @@ function initializeLaborTables() {
 function renderLaborSection(rows, title, sectionId) {
     if (!rows.length) return "";
     const safeId = `labor-table-${String(sectionId).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
-    const avgActual = averageOf(rows, "ActualHours");
-    const avgEstimated = averageOf(rows, "EstimatedHours");
-    const avgVariance = averageOf(rows, "VarianceHours");
-    const avgEfficiency = weightedEfficiency(rows);
+    const bounds = getVarianceBounds(rows);
+    const averageRows = removeVarianceOutliers(rows);
+    const excludedCount = rows.length - averageRows.length;
+    const avgActual = averageOf(averageRows, "ActualHours");
+    const avgEstimated = averageOf(averageRows, "EstimatedHours");
+    const avgVariance = averageOf(averageRows, "VarianceHours");
+    const avgEfficiency = weightedEfficiency(averageRows);
+    let outlierText = "";
+    if (excludedCount > 0) {
+        outlierText = `<span class="outlier-note">${excludedCount} outlier${excludedCount === 1 ? "" : "s"} excluded from averages</span>`;
+    }
 
     const columns = [
         ["Revision", "text", "Filter"],
@@ -1266,9 +1368,10 @@ function renderLaborSection(rows, title, sectionId) {
         const estimated = estimatedNumber.toFixed(2);
         const variance = varianceNumber.toFixed(2);
         const efficiency = efficiencyNumber.toFixed(1);
-        html += `<tr class="data-row" data-actual="${actualNumber}" data-estimated="${estimatedNumber}" data-variance="${varianceNumber}" data-efficiency="${efficiencyNumber}">
+        const outlier = isVarianceOutlier(row, bounds);
+        html += `<tr class="data-row${outlier ? " outlier-row" : ""}" data-actual="${actualNumber}" data-estimated="${estimatedNumber}" data-variance="${varianceNumber}">
             <td data-sort-value="${row.PartRevision || ""}">${row.PartRevision || ""}</td>
-            <td data-sort-value="${row.JobNumber || ""}">${row.JobNumber || ""}</td>
+            <td data-sort-value="${row.JobNumber || ""}">${row.JobNumber || ""}${outlier ? '<span class="outlier-badge">OUTLIER</span>' : ""}</td>
             <td data-sort-value="${date}">${date}</td>
             <td data-sort-value="${row.EmployeeName || ""}">${row.EmployeeName || ""}</td>
             <td data-sort-value="${Number(row.EntryCount || 0)}">${Number(row.EntryCount || 0)}</td>
@@ -1281,7 +1384,7 @@ function renderLaborSection(rows, title, sectionId) {
         </tr>`;
     });
     html += `<tr class="average-row">
-        <td colspan="7" class="avg-label">${title} Average</td>
+        <td colspan="7" class="avg-label">Adjusted ${title} Average ${outlierText}</td>
         <td class="avg-actual">${avgActual.toFixed(2)}</td>
         <td class="avg-estimated">${avgEstimated.toFixed(2)}</td>
         <td class="avg-variance">${avgVariance.toFixed(2)}</td>
@@ -1644,6 +1747,7 @@ function historyCard(summary, type) {
         </div>`;
     }
 
+    const adjusted = safeNumber(summary.AdjustedRuns);
     const avgQty = safeNumber(summary.AvgQuantity);
     const avgActual = safeNumber(summary.AvgActualHours);
     const avgEstimated = safeNumber(summary.AvgEstimatedHours);
@@ -1653,7 +1757,7 @@ function historyCard(summary, type) {
         : `<div class="hist-stat"><div class="label">Jobs</div><div class="hist-value">${safeNumber(summary.Jobs).toFixed(0)}</div></div>`;
 
     return `<div class="history-card ${type.toLowerCase()}">
-        <div class="history-title">${type} History <small>${runs.toFixed(0)} runs used</small></div>
+        <div class="history-title">${type} History <small>${adjusted} of ${runs} runs used</small></div>
         <div class="history-stats">
             <div class="hist-stat"><div class="label">Runs</div><div class="hist-value">${runs.toFixed(0)}</div></div>
             ${quantityBlock}
@@ -1668,7 +1772,7 @@ function renderOperationHistory(job) {
     return `<div class="operation-history">
         <div class="operation-history-heading">
             <div class="operation-history-title">Current Operation Average Labor History</div>
-            <div class="operation-history-note">Same part revision + operation • all qualifying labor runs included</div>
+            <div class="operation-history-note">Same part revision + operation • adjusted ±1 SD</div>
         </div>
         <div class="history-wrap">
             ${historyCard(job.HistoricalProduction || {}, 'Production')}
@@ -2027,7 +2131,7 @@ button:hover { filter: brightness(.96); }
     <div id="summaryArea"></div>
     <div id="statusArea" class="status">Loading live jobs...</div>
     <div id="jobsGrid" class="jobs-grid"></div>
-    <div class="footer">Historical averages include all qualifying labor runs • Internal use</div>
+    <div class="footer">Historical averages use the same combined-entry and ±1 standard-deviation variance outlier method as Part Labor History • Internal use</div>
 </main>
 <script>
 let dashboardJobs = [];
@@ -2113,6 +2217,7 @@ function applyDashboardFilters() {
 function historyCard(summary, type) {
     const runs = safeNumber(summary?.Runs);
     if (!runs) return `<div class="history-card ${type.toLowerCase()}"><div class="history-title">${type} History <small>No prior history</small></div><div class="no-history">No comparable ${type.toLowerCase()} labor history for this part revision and operation.</div></div>`;
+    const adjusted = safeNumber(summary.AdjustedRuns);
     const avgQty = safeNumber(summary.AvgQuantity);
     const avgActual = safeNumber(summary.AvgActualHours);
     const avgEstimated = safeNumber(summary.AvgEstimatedHours);
@@ -2121,7 +2226,7 @@ function historyCard(summary, type) {
         ? `<div class="hist-stat"><div class="label">Avg Qty</div><div class="hist-value">${avgQty.toFixed(1)}</div></div>`
         : `<div class="hist-stat"><div class="label">Jobs</div><div class="hist-value">${safeNumber(summary.Jobs).toFixed(0)}</div></div>`;
     return `<div class="history-card ${type.toLowerCase()}">
-        <div class="history-title">${type} History <small>${runs.toFixed(0)} runs used</small></div>
+        <div class="history-title">${type} History <small>${adjusted} of ${runs} runs used</small></div>
         <div class="history-stats">
             <div class="hist-stat"><div class="label">Runs</div><div class="hist-value">${runs.toFixed(0)}</div></div>
             ${quantityBlock}
