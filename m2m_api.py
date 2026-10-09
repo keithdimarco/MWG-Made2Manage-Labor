@@ -320,14 +320,29 @@ def _combine_dashboard_history(rows):
         labor_date = row.get("LaborDate") or ""
         if isinstance(labor_date, str):
             labor_date = labor_date[:10]
-        key = (
-            row.get("JobNumber"),
-            row.get("OperationNumber"),
-            row.get("EmployeeNumber"),
-            labor_date,
-            row.get("LaborType"),
-            row.get("PartRevision"),
-        )
+
+        labor_type = row.get("LaborType")
+        is_setup = labor_type == "Setup"
+
+        # Production keeps the existing employee/date grouping.
+        # Setup is one historical comparison per Job + Operation.
+        if is_setup:
+            key = (
+                row.get("JobNumber"),
+                row.get("OperationNumber"),
+                labor_type,
+                row.get("PartRevision"),
+            )
+        else:
+            key = (
+                row.get("JobNumber"),
+                row.get("OperationNumber"),
+                row.get("EmployeeNumber"),
+                labor_date,
+                labor_type,
+                row.get("PartRevision"),
+            )
+
         if key not in groups:
             groups[key] = {
                 "PartNumber": row.get("PartNumber"),
@@ -335,20 +350,36 @@ def _combine_dashboard_history(rows):
                 "OperationNumber": row.get("OperationNumber"),
                 "EmployeeNumber": row.get("EmployeeNumber"),
                 "LaborDate": labor_date,
-                "LaborType": row.get("LaborType"),
+                "LaborType": labor_type,
                 "PartRevision": row.get("PartRevision"),
                 "QuantityComplete": 0.0,
                 "ActualHours": 0.0,
                 "EstimatedHours": 0.0,
+                "_SetupEstimateCaptured": False,
             }
+
         group = groups[key]
         group["QuantityComplete"] += _safe_float(row.get("QuantityComplete"))
         group["ActualHours"] += _safe_float(row.get("ActualHours"))
-        group["EstimatedHours"] += _safe_float(row.get("EstimatedHours"))
+
+        estimated = _safe_float(row.get("EstimatedHours"))
+        if is_setup:
+            # M2M can repeat the same setup estimate on every setup labor entry.
+            # Use the setup estimate once for the whole job/operation.
+            if not group["_SetupEstimateCaptured"] and estimated > 0:
+                group["EstimatedHours"] = estimated
+                group["_SetupEstimateCaptured"] = True
+        else:
+            group["EstimatedHours"] += estimated
+
+        if labor_date and (not group["LaborDate"] or labor_date < group["LaborDate"]):
+            group["LaborDate"] = labor_date
 
     combined = list(groups.values())
     for row in combined:
+        row.pop("_SetupEstimateCaptured", None)
         row["VarianceHours"] = row["ActualHours"] - row["EstimatedHours"]
+
     return combined
 
 
@@ -928,9 +959,18 @@ async function searchPart() {
 
 function combineLaborEntries(rows) {
     const groups = {};
+
     rows.forEach(row => {
         const laborDate = row.LaborDate ? row.LaborDate.substring(0, 10) : "";
-        const key = [row.JobNumber, row.OperationNumber, row.EmployeeNumber, laborDate, row.LaborType, row.PartRevision].join("|");
+        const isSetup = row.LaborType === "Setup";
+
+        // Production keeps the existing grouping.
+        // Setup becomes ONE row per Job + Operation + Work Center.
+        // This sums all setup Actual Hours while using one setup estimate.
+        const key = isSetup
+            ? [row.JobNumber, row.OperationNumber, row.WorkCenter || "", row.LaborType, row.PartRevision].join("|")
+            : [row.JobNumber, row.OperationNumber, row.EmployeeNumber, laborDate, row.LaborType, row.PartRevision].join("|");
+
         if (!groups[key]) {
             groups[key] = {
                 PartNumber: row.PartNumber,
@@ -952,28 +992,79 @@ function combineLaborEntries(rows) {
                 EstimatedHours: 0,
                 VarianceHours: 0,
                 EfficiencyPercent: 0,
-                EntryCount: 0
+                EntryCount: 0,
+                _EmployeeNames: [],
+                _EmployeeNumbers: [],
+                _SetupEstimateCaptured: false
             };
         }
+
         const group = groups[key];
+
         group.QuantityComplete += Number(row.QuantityComplete) || 0;
         group.ScrapQuantity += Number(row.ScrapQuantity) || 0;
         group.ActualHours += Number(row.ActualHours) || 0;
-        group.EstimatedHours += Number(row.EstimatedHours) || 0;
+
+        const estimated = Number(row.EstimatedHours) || 0;
+
+        if (isSetup) {
+            // The setup estimate may be repeated on every setup entry.
+            // Capture it ONCE so average estimated setup hours are not inflated.
+            if (!group._SetupEstimateCaptured && estimated > 0) {
+                group.EstimatedHours = estimated;
+                group._SetupEstimateCaptured = true;
+            }
+        } else {
+            group.EstimatedHours += estimated;
+        }
+
         group.EntryCount += 1;
-        if (row.StartDateTime && (!group.StartDateTime || row.StartDateTime < group.StartDateTime)) group.StartDateTime = row.StartDateTime;
-        if (row.EndDateTime && (!group.EndDateTime || row.EndDateTime > group.EndDateTime)) group.EndDateTime = row.EndDateTime;
+
+        const employeeName = String(row.EmployeeName || "").trim();
+        const employeeNumber = String(row.EmployeeNumber || "").trim();
+
+        if (employeeName && !group._EmployeeNames.includes(employeeName)) {
+            group._EmployeeNames.push(employeeName);
+        }
+        if (employeeNumber && !group._EmployeeNumbers.includes(employeeNumber)) {
+            group._EmployeeNumbers.push(employeeNumber);
+        }
+
+        if (row.LaborDate && (!group.LaborDate || row.LaborDate < group.LaborDate)) {
+            group.LaborDate = row.LaborDate;
+        }
+        if (row.StartDateTime && (!group.StartDateTime || row.StartDateTime < group.StartDateTime)) {
+            group.StartDateTime = row.StartDateTime;
+        }
+        if (row.EndDateTime && (!group.EndDateTime || row.EndDateTime > group.EndDateTime)) {
+            group.EndDateTime = row.EndDateTime;
+        }
     });
+
     const combinedRows = Object.values(groups);
+
     combinedRows.forEach(row => {
+        if (row.LaborType === "Setup") {
+            row.EmployeeName = row._EmployeeNames.join(", ");
+            row.EmployeeNumber = row._EmployeeNumbers.join(", ");
+        }
+
+        delete row._EmployeeNames;
+        delete row._EmployeeNumbers;
+        delete row._SetupEstimateCaptured;
+
         row.VarianceHours = row.ActualHours - row.EstimatedHours;
-        row.EfficiencyPercent = row.ActualHours > 0 ? (row.EstimatedHours / row.ActualHours) * 100 : 0;
+        row.EfficiencyPercent = row.ActualHours > 0
+            ? (row.EstimatedHours / row.ActualHours) * 100
+            : 0;
     });
+
     combinedRows.sort((a, b) => {
         const opDifference = Number(a.OperationNumber) - Number(b.OperationNumber);
         if (opDifference !== 0) return opDifference;
         return (a.LaborDate || "").localeCompare(b.LaborDate || "");
     });
+
     return combinedRows;
 }
 
@@ -1445,6 +1536,9 @@ function renderLaborSection(rows, title, sectionId) {
     let html = `
         <div class="labor-section-title">
             <span>${title}
+                ${title === "Setup"
+                    ? '<span class="analysis-note">Setup: all entries for each job are combined; one setup estimate is used per job/operation.</span>'
+                    : ''}
                 <span class="analysis-note" id="${safeId}-analysis">
                     Analysis: &lt;80% = performance review • ≥125% = high-performance review • MAD |Z| &gt; 3.5 = statistical outlier
                 </span>
