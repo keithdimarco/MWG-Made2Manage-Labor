@@ -1132,7 +1132,7 @@ button:hover { background: #f3f6f9; }
     padding: 14px; text-align: left; color: var(--muted); font-size: 12px; font-weight: 700;
     text-transform: uppercase; letter-spacing: .45px;
 }
-.summary-value { font-size: 24px; font-weight: 800; color: var(--ink); margin-top: 6px; text-transform: none; letter-spacing: 0; }
+.summary-value { font-size: 28px; font-weight: 800; color: var(--ink); margin-top: 6px; text-transform: none; letter-spacing: 0; }
 .summary-card.efficiency-good, .operation-summary-card.efficiency-good {
     background: #edf8f2; border-color: #abd9c3;
 }
@@ -1158,8 +1158,8 @@ button:hover { background: #f3f6f9; }
     justify-content: space-between; align-items: center; gap: 16px;
 }
 .operation-header:hover { filter: brightness(1.04); }
-.operation-number { font-size: 20px; font-weight: 800; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.operation-workcenter { font-size: 14px; font-weight: 700; color: #c8d8e8; }
+.operation-number { font-size: 22px; font-weight: 800; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.operation-workcenter { font-size: 16px; font-weight: 700; color: #c8d8e8; }
 .operation-description { margin-top: 5px; line-height: 1.4; color: #d9e5ef; font-size: 13px; max-width: 1100px; }
 .operation-toggle {
     font-size: 24px; font-weight: 400; min-width: 40px; min-height: 40px;
@@ -1178,7 +1178,7 @@ button:hover { background: #f3f6f9; }
     background: white; border: 1px solid var(--line); border-radius: 9px; padding: 11px;
     color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .35px;
 }
-.operation-summary-value { font-size: 19px; font-weight: 800; color: var(--ink); margin-top: 5px; text-transform: none; letter-spacing: 0; }
+.operation-summary-value { font-size: 22px; font-weight: 800; color: var(--ink); margin-top: 5px; text-transform: none; letter-spacing: 0; }
 .labor-section-title {
     padding: 10px 15px; background: var(--blue-soft); color: var(--navy); font-size: 15px;
     font-weight: 800; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
@@ -1190,17 +1190,51 @@ button:hover { background: #f3f6f9; }
     min-height: 30px; padding: 4px 9px; font-size: 11px; border-radius: 7px;
     background: white; color: var(--navy); border: 1px solid #c8d2dc;
 }
-.table-wrap { width: 100%; overflow-x: auto; }
+/* Keep Part Labor History column headings visible while the page scrolls. */
+.table-wrap { width: 100%; overflow: visible; }
+.jobs-table-wrap { overflow: visible; }
+/* Keep the larger labor-history output text, but use regular weight and fit all columns on screen. */
+.labor-table { width: 100%; table-layout: fixed; }
+.labor-table th, .labor-table td { white-space: normal; overflow-wrap: anywhere; }
+.labor-table td { font-size: 15px; font-weight: 400; padding: 8px 5px; height: 42px; vertical-align: middle; }
+/* Keep employee names fully visible on one line and maintain consistent labor-history row height. */
+.labor-table tbody tr:not(.raw-average-row):not(.adjusted-average-row) { height: 42px; }
+.labor-table tbody tr:not(.raw-average-row):not(.adjusted-average-row) td:nth-child(4) {
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: normal;
+}
+/* Give Employee enough width for full names while keeping the complete labor table on the page. */
+.labor-table col:nth-child(1) { width: 5%; }
+.labor-table col:nth-child(2) { width: 9%; }
+.labor-table col:nth-child(3) { width: 8%; }
+.labor-table col:nth-child(4) { width: 20%; }
+.labor-table col:nth-child(5) { width: 5%; }
+.labor-table col:nth-child(6) { width: 5%; }
+.labor-table col:nth-child(7) { width: 5%; }
+.labor-table col:nth-child(8) { width: 7%; }
+.labor-table col:nth-child(9) { width: 8%; }
+.labor-table col:nth-child(10) { width: 7%; }
+.labor-table col:nth-child(11) { width: 8%; }
+.labor-table col:nth-child(12) { width: 13%; }
+.labor-table .status-badge { font-weight: 500; }
+.labor-table input.column-filter { min-width: 0; width: 100%; padding-left: 5px; padding-right: 5px; }
+.summary-value, .operation-summary-value { font-weight: 400; }
+.labor-table thead th { position: sticky; z-index: 30; box-shadow: 0 2px 5px rgba(20,39,61,.12); }
+.labor-table .column-head-row th { top: 0; }
+.labor-table .filter-row th { top: 34px; z-index: 29; }
+.jobs-table thead th { position: sticky; top: 0; z-index: 30; box-shadow: 0 2px 5px rgba(20,39,61,.12); }
 table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 1180px; }
 th {
     background: #f7f9fb; color: #526171; text-align: left; padding: 8px 8px;
-    border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 11px;
+    border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 12px;
     text-transform: uppercase; letter-spacing: .45px; position: sticky; top: 0; z-index: 2;
 }
 .column-head-row th { padding: 0; }
 .sort-button {
     width: 100%; min-height: 34px; padding: 8px; border: 0; border-radius: 0;
-    background: transparent; color: inherit; text-align: left; font-size: 11px;
+    background: transparent; color: inherit; text-align: left; font-size: 12px;
     text-transform: uppercase; letter-spacing: .45px; display: flex; align-items: center;
     justify-content: space-between; gap: 7px;
 }
@@ -1213,7 +1247,7 @@ th {
     box-sizing: border-box;
 }
 .column-filter::placeholder { color: #91a0ae; }
-td { padding: 9px; border-bottom: 1px solid #e8edf2; white-space: nowrap; font-size: 13px; }
+td { padding: 10px 9px; border-bottom: 1px solid #e8edf2; white-space: nowrap; font-size: 15px; font-weight: 400; }
 .no-section-results td { text-align: center; color: var(--muted); font-style: italic; padding: 14px; }
 tbody tr:nth-child(even):not(.average-row):not(.raw-average-row):not(.adjusted-average-row):not(.analysis-below-row):not(.analysis-high-row):not(.analysis-outlier-row):not(.analysis-data-row) { background: #fbfcfd; }
 tbody tr:hover:not(.average-row) { background: #f0f5fa; }
@@ -1228,7 +1262,7 @@ tbody tr:hover:not(.average-row) { background: #f0f5fa; }
 .analysis-outlier-row { background: #fff4cf !important; }
 .analysis-data-row { background: #f3f0f7 !important; }
 .status-badge {
-    display: inline-block; padding: 3px 7px; border-radius: 999px; font-size: 10px;
+    display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 11px;
     font-weight: 800; letter-spacing: .2px; white-space: nowrap;
 }
 .status-normal { background: #eef2f6; color: #536273; }
@@ -1245,6 +1279,7 @@ tbody tr:hover:not(.average-row) { background: #f0f5fa; }
 .loading { color: var(--navy); border-left: 4px solid var(--blue); font-weight: 700; }
 .footer { color: #7a8794; text-align: center; font-size: 12px; padding: 18px 0 28px; }
 @media (max-width: 1000px) {
+    .table-wrap { overflow-x: auto; overflow-y: visible; }
     .topbar { align-items: flex-start; flex-direction: column; padding: 14px 18px; }
     .shell { padding: 18px; }
     .summary-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1909,6 +1944,9 @@ function renderLaborSection(rows, title, sectionId) {
             </div>
         </div>
         <div class="table-wrap"><table class="labor-table" id="${safeId}" data-section-title="${title}">
+        <colgroup>
+            <col><col><col><col><col><col><col><col><col><col><col><col>
+        </colgroup>
         <thead>
             <tr class="column-head-row">`;
 
@@ -2682,6 +2720,7 @@ button:hover { filter: brightness(.96); }
 .footer { color: #7a8794; text-align: center; font-size: 11px; padding: 10px 0; }
 @media (max-width: 1150px) { .jobs-grid { grid-template-columns: 1fr; } .history-wrap { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 800px) {
+    .jobs-table-wrap { overflow-x: auto; }
     .topbar { align-items: stretch; flex-direction: column; padding: 11px 14px; }
     .nav { width: 100%; }
     .nav a { flex: 1 1 140px; min-width: 0; font-size: 12px; padding: 8px 6px; }
@@ -2953,7 +2992,7 @@ button:hover { background: #f3f6f9; }
 .summary-range { color: var(--muted); font-size: 12px; font-weight: 650; }
 .summary-grid { display: grid; grid-template-columns: repeat(8, minmax(120px, 1fr)); gap: 9px; }
 .summary-card { background: var(--soft); border: 1px solid var(--line); border-radius: 9px; padding: 11px; color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .35px; }
-.summary-value { margin-top: 5px; font-size: 21px; font-weight: 850; color: var(--ink); text-transform: none; letter-spacing: 0; }
+.summary-value { margin-top: 5px; font-size: 26px; font-weight: 400; color: var(--ink); text-transform: none; letter-spacing: 0; }
 .summary-card.bad { background: var(--bad-bg); border-color: var(--bad-line); }
 .summary-card.bad .summary-value { color: var(--bad-text); }
 .summary-card.high { background: var(--high-bg); border-color: var(--high-line); }
@@ -2962,25 +3001,33 @@ button:hover { background: #f3f6f9; }
 .summary-card.data .summary-value { color: var(--data-text); }
 .summary-card.good { background: var(--good-bg); border-color: var(--good-line); }
 .summary-card.good .summary-value { color: var(--good-text); }
-.jobs-card { overflow: hidden; }
+.jobs-card { overflow: visible; }
 .jobs-tools { padding: 13px 14px; display: flex; gap: 9px; align-items: end; flex-wrap: wrap; border-bottom: 1px solid var(--line); background: #fbfcfd; }
 .jobs-tools .field input { min-width: 240px; }
 .job-count { margin-left: auto; color: var(--muted); font-size: 12px; font-weight: 750; align-self: center; }
 .table-wrap { width: 100%; overflow-x: auto; }
+.jobs-table-wrap { overflow: visible; }
+/* Fit Completed Job Review output to the viewport without shrinking the enlarged data font. */
+.jobs-table { width: 100%; table-layout: fixed; }
+.jobs-table th, .jobs-table td { white-space: normal; overflow-wrap: anywhere; }
+.jobs-table td { font-size: 15px; font-weight: 400; padding: 8px 5px; }
+.jobs-table .job-id, .jobs-table .part-id { font-weight: 400; }
+.jobs-table .status-badge { font-weight: 500; }
+.jobs-table thead th { position: sticky; top: 0; z-index: 40; background: #f5f8fb; box-shadow: 0 2px 6px rgba(20,39,61,.18); }
 table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 1260px; }
-th { background: #f5f8fb; color: #526171; text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; position: sticky; top: 0; z-index: 2; }
-td { padding: 9px 8px; border-bottom: 1px solid #e8edf2; white-space: nowrap; font-size: 12px; vertical-align: middle; }
+th { background: #f5f8fb; color: #526171; text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; position: sticky; top: 0; z-index: 2; }
+td { padding: 10px 8px; border-bottom: 1px solid #e8edf2; white-space: nowrap; font-size: 15px; font-weight: 400; vertical-align: middle; }
 .job-row { cursor: pointer; }
 .job-row:hover { filter: brightness(.985); }
 .job-row.status-below { background: var(--bad-bg); }
 .job-row.status-high { background: var(--high-bg); }
 .job-row.status-data { background: var(--data-bg); }
 .job-row.status-normal:nth-of-type(even) { background: #fbfcfd; }
-.expand-cell { width: 34px; text-align: center; font-size: 17px; color: var(--blue); font-weight: 850; }
+.expand-cell { width: 34px; text-align: center; font-size: 20px; color: var(--blue); font-weight: 850; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .job-id { font-weight: 850; color: var(--navy); }
 .part-id { font-weight: 700; }
-.status-badge { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 9px; font-weight: 850; letter-spacing: .2px; }
+.status-badge { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 850; letter-spacing: .2px; }
 .badge-below { background: #f4c7c7; color: #842626; }
 .badge-normal { background: #e4eaf0; color: #4e5d6c; }
 .badge-high { background: #cfe5f8; color: #1e537f; }
@@ -3003,8 +3050,8 @@ td { padding: 9px 8px; border-bottom: 1px solid #e8edf2; white-space: nowrap; fo
     padding: 16px 18px; display: flex; justify-content: space-between; align-items: center; gap: 16px;
 }
 .review-operation-heading { min-width: 0; }
-.review-operation-number { font-size: 20px; font-weight: 850; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.review-operation-workcenter { font-size: 14px; font-weight: 700; color: #c8d8e8; }
+.review-operation-number { font-size: 22px; font-weight: 850; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.review-operation-workcenter { font-size: 16px; font-weight: 700; color: #c8d8e8; }
 .review-operation-completed { margin-top: 5px; line-height: 1.4; color: #d9e5ef; font-size: 12px; }
 
 .review-operation-summary {
@@ -3015,7 +3062,7 @@ td { padding: 9px 8px; border-bottom: 1px solid #e8edf2; white-space: nowrap; fo
     background: white; border: 1px solid var(--line); border-radius: 9px; padding: 11px;
     color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; letter-spacing: .35px;
 }
-.review-summary-value { font-size: 19px; font-weight: 850; color: var(--ink); margin-top: 5px; text-transform: none; letter-spacing: 0; }
+.review-summary-value { font-size: 23px; font-weight: 400; color: var(--ink); margin-top: 5px; text-transform: none; letter-spacing: 0; }
 .review-summary-card.bad { background: var(--bad-bg); border-color: var(--bad-line); }
 .review-summary-card.bad .review-summary-value { color: var(--bad-text); }
 .review-summary-card.high { background: var(--high-bg); border-color: var(--high-line); }
@@ -3027,24 +3074,27 @@ td { padding: 9px 8px; border-bottom: 1px solid #e8edf2; white-space: nowrap; fo
 .review-summary-card.ignored { background: #f2f4f6; border-color: #d6dce2; }
 .review-summary-card.ignored .review-summary-value { color: #65717c; }
 .review-labor-title {
-    padding: 9px 15px; background: var(--blue-soft); color: var(--navy); font-size: 14px;
-    font-weight: 850; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding: 11px 15px; background: var(--blue-soft); color: var(--navy); font-size: 16px;
+    font-weight: 900; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
 }
-.review-labor-table { min-width: 780px; background: white; }
-.review-labor-table th { position: static; background: #f7f9fb; font-size: 10px; }
-.review-labor-table td { font-size: 12px; }
+.review-labor-table { width: 100%; min-width: 0; table-layout: fixed; background: white; }
+.review-labor-table th { position: static; background: #f7f9fb; font-size: 14px; font-weight: 700; padding: 10px 6px; white-space: normal; }
+.review-labor-table td { font-size: 16px; font-weight: 400; padding: 10px 6px; white-space: normal; overflow-wrap: anywhere; }
+.review-labor-table td.num { font-weight: 400; }
+.review-labor-table .status-badge, .review-labor-table .ignored-badge { font-size: 12px; font-weight: 500; }
 .ignored-strip { padding: 9px 14px; background: #f2f4f6; color: #65717c; font-size: 11px; font-weight: 700; border-top: 1px solid var(--line); }
 .ignored-badge { display:inline-block; padding:4px 8px; border-radius:999px; background:#e4e7ea; color:#56616b; font-size:10px; font-weight:800; letter-spacing:.35px; }
-.variance-good { color: var(--good-text); font-weight: 800; }
-.variance-bad { color: var(--bad-text); font-weight: 800; }
-.eff-bad { color: var(--bad-text); font-weight: 850; }
-.eff-high { color: var(--high-text); font-weight: 850; }
-.eff-normal { color: var(--good-text); font-weight: 850; }
+.variance-good { color: var(--good-text); font-weight: 400; }
+.variance-bad { color: var(--bad-text); font-weight: 400; }
+.eff-bad { color: var(--bad-text); font-weight: 400; }
+.eff-high { color: var(--high-text); font-weight: 400; }
+.eff-normal { color: var(--good-text); font-weight: 400; }
 .status-box { padding: 14px 16px; color: var(--navy); border-left: 4px solid var(--blue); font-weight: 750; }
 .status-box.error { color: #a32f2f; border-left-color: #c74646; }
 .footer { color: #7a8794; text-align: center; font-size: 11px; padding: 10px 0 24px; }
 @media (max-width: 1150px) { .summary-grid { grid-template-columns: repeat(4, 1fr); } }
 @media (max-width: 800px) {
+    .jobs-table-wrap { overflow-x: auto; }
     .topbar { align-items: stretch; flex-direction: column; padding: 11px 14px; }
     .nav { width: 100%; }
     .nav a { flex: 1 1 145px; min-width: 0; font-size: 11px; padding: 8px 5px; }
@@ -3102,8 +3152,8 @@ td { padding: 9px 8px; border-bottom: 1px solid #e8edf2; white-space: nowrap; fo
             <button onclick="collapseAll()">Collapse All</button>
             <div id="jobCount" class="job-count"></div>
         </div>
-        <div class="table-wrap">
-            <table>
+        <div class="table-wrap jobs-table-wrap">
+            <table class="jobs-table">
                 <thead>
                     <tr>
                         <th></th><th>Job</th><th>Part</th><th>Rev</th><th>Completion</th><th>Ops</th>
