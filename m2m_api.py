@@ -1195,7 +1195,9 @@ button:hover { background: #f3f6f9; }
 .jobs-table-wrap { overflow: visible; }
 /* Keep the larger labor-history output text, but use regular weight and fit all columns on screen. */
 .labor-table { width: 100%; table-layout: fixed; }
-.labor-table th, .labor-table td { white-space: normal; overflow-wrap: anywhere; }
+/* Keep Part Labor History column headings on one line. */
+.labor-table th { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+.labor-table td { white-space: normal; overflow-wrap: anywhere; }
 .labor-table td { font-size: 15px; font-weight: 400; padding: 8px 5px; height: 42px; vertical-align: middle; }
 /* Keep employee names fully visible on one line and maintain consistent labor-history row height. */
 .labor-table tbody tr:not(.raw-average-row):not(.adjusted-average-row) { height: 42px; }
