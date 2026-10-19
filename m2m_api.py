@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 import pyodbc
+from datetime import date, timedelta
 
 
 app = FastAPI()
@@ -64,12 +65,12 @@ LEFT JOIN jodrtg jr
 OUTER APPLY
 (
     SELECT TOP 1
-        LTRIM(RTRIM(v.fcpro_name)) AS WorkCenterName
-    FROM vw_tot_direct_wc v
+        LTRIM(RTRIM(iw.fcpro_name)) AS WorkCenterName
+    FROM inwork iw
     WHERE
-        LTRIM(RTRIM(v.fpro_id)) = LTRIM(RTRIM(jr.fpro_id))
-        AND LTRIM(RTRIM(ISNULL(v.fcpro_name, ''))) <> ''
-    ORDER BY v.fdate DESC
+        LTRIM(RTRIM(iw.fcpro_id)) = LTRIM(RTRIM(jr.fpro_id))
+        AND LTRIM(RTRIM(ISNULL(iw.fcpro_name, ''))) <> ''
+    ORDER BY LTRIM(RTRIM(iw.fcpro_name))
 ) wc
 LEFT JOIN prempl pe
     ON pe.fempno = ld.fempno
@@ -645,6 +646,364 @@ ORDER BY jm.fpartno, jm.fpartrev, ld.foperno, ld.fdate, ld.fjobno
     }
 
 
+@app.get("/api/completed-job-review")
+def get_completed_job_review(
+    start_date: str = Query(""),
+    end_date: str = Query("")
+):
+    """Return completed jobs plus operation-level labor performance for a date range.
+
+    The date range selects jobs by the latest routing completion date.  Once a
+    job is selected, all historical Setup and Production labor for that job is
+    included in the performance calculation.
+    """
+    start_text = (start_date or "").strip()
+    end_text = (end_date or "").strip()
+
+    # Default to the previous Monday-Sunday week when no range is supplied.
+    if not start_text and not end_text:
+        today = date.today()
+        this_monday = today - timedelta(days=today.weekday())
+        end_value = this_monday - timedelta(days=1)
+        start_value = end_value - timedelta(days=6)
+    elif not start_text or not end_text:
+        raise HTTPException(status_code=400, detail="Both start_date and end_date are required.")
+    else:
+        try:
+            start_value = date.fromisoformat(start_text)
+            end_value = date.fromisoformat(end_text)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Dates must use YYYY-MM-DD format.")
+
+    if start_value > end_value:
+        raise HTTPException(status_code=400, detail="start_date cannot be after end_date.")
+
+    conn = get_connection()
+    # This is a read-only reporting request against the live M2M database.
+    # Autocommit + READ UNCOMMITTED keeps the report from holding a long read transaction.
+    conn.autocommit = True
+    cursor = conn.cursor()
+
+    build_sql = """
+SET NOCOUNT ON;
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+DECLARE @StartDate DATE = ?;
+DECLARE @EndDate DATE = ?;
+
+IF OBJECT_ID('tempdb..#SelectedJobs') IS NOT NULL DROP TABLE #SelectedJobs;
+IF OBJECT_ID('tempdb..#LaborAgg') IS NOT NULL DROP TABLE #LaborAgg;
+IF OBJECT_ID('tempdb..#LaborCalc') IS NOT NULL DROP TABLE #LaborCalc;
+IF OBJECT_ID('tempdb..#LaborCalcTagged') IS NOT NULL DROP TABLE #LaborCalcTagged;
+IF OBJECT_ID('tempdb..#JobTotals') IS NOT NULL DROP TABLE #JobTotals;
+
+WITH JobCompletion AS
+(
+    SELECT
+        jm.fjobno AS JobNumberRaw,
+        LTRIM(RTRIM(jm.fjobno)) AS JobNumber,
+        LTRIM(RTRIM(jm.fpartno)) AS PartNumber,
+        LTRIM(RTRIM(ISNULL(jm.fpartrev, ''))) AS PartRevision,
+        LTRIM(RTRIM(jm.fstatus)) AS JobStatus,
+        MAX(
+            CASE
+                WHEN rt.fcomp_date > '19000101' THEN rt.fcomp_date
+                ELSE NULL
+            END
+        ) AS CompletionDate,
+        COUNT(*) AS OperationCount,
+        SUM(
+            CASE
+                WHEN rt.fnqty_togo > 0
+                  OR rt.fcomp_date IS NULL
+                  OR rt.fcomp_date <= '19000101'
+                THEN 1 ELSE 0
+            END
+        ) AS IncompleteOperations
+    FROM jomast jm
+    INNER JOIN jodrtg rt
+        ON rt.fjobno = jm.fjobno
+    WHERE LTRIM(RTRIM(jm.fstatus)) IN ('COMPLETED', 'CLOSED')
+    GROUP BY
+        jm.fjobno,
+        jm.fpartno,
+        jm.fpartrev,
+        jm.fstatus
+)
+SELECT
+    JobNumberRaw,
+    JobNumber,
+    PartNumber,
+    PartRevision,
+    JobStatus,
+    CompletionDate,
+    OperationCount
+INTO #SelectedJobs
+FROM JobCompletion
+WHERE IncompleteOperations = 0
+  AND CompletionDate >= @StartDate
+  AND CompletionDate < DATEADD(DAY, 1, @EndDate);
+
+CREATE CLUSTERED INDEX IX_SelectedJobs_JobNumber
+    ON #SelectedJobs(JobNumberRaw);
+
+/* Aggregate labor before calling GetEstimat so the estimate function runs once
+   per Job + Operation + Labor Type instead of once per labor transaction. */
+SELECT
+    ld.fjobno AS JobNumberRaw,
+    ld.foperno AS OperationNumber,
+    LTRIM(RTRIM(ld.fcode1)) AS LaborType,
+    SUM(DATEDIFF(SECOND, ld.fsdatetime, ld.fedatetime) / 3600.0) AS ActualHours,
+    SUM(ISNULL(ld.fcompqty, 0)) AS CompletedQty,
+    MAX(ISNULL(ld.fcompqty, 0)) AS MaxCompletedQty
+INTO #LaborAgg
+FROM ladetail ld
+INNER JOIN #SelectedJobs sj
+    ON ld.fjobno = sj.JobNumberRaw
+WHERE ld.fcode1 IN ('S', 'P')
+  AND ld.fedatetime > ld.fsdatetime
+GROUP BY
+    ld.fjobno,
+    ld.foperno,
+    ld.fcode1;
+
+CREATE CLUSTERED INDEX IX_LaborAgg
+    ON #LaborAgg(JobNumberRaw, OperationNumber, LaborType);
+
+/* Setup estimate is counted once only when setup labor actually exists.
+   Production estimate is earned from the aggregated completed quantity. */
+SELECT
+    JobNumberRaw,
+    OperationNumber,
+    LaborType,
+    ActualHours,
+    CompletedQty,
+    CASE
+        WHEN LaborType = 'S'
+        THEN ISNULL(M2MReport.GetEstimat(
+            JobNumberRaw,
+            OperationNumber,
+            'S',
+            MaxCompletedQty
+        ), 0)
+        WHEN LaborType = 'P'
+        THEN ISNULL(M2MReport.GetEstimat(
+            JobNumberRaw,
+            OperationNumber,
+            'P',
+            CompletedQty
+        ), 0)
+        ELSE 0
+    END AS EstimatedHours
+INTO #LaborCalc
+FROM #LaborAgg;
+
+/* Tag Quality Inspection and Shipping operations so their labor variance does
+   not affect Completed Job Review efficiency. The operation remains visible
+   when the user expands the job, but is clearly marked IGNORED. */
+SELECT
+    lc.JobNumberRaw,
+    lc.OperationNumber,
+    lc.LaborType,
+    lc.ActualHours,
+    lc.CompletedQty,
+    lc.EstimatedHours,
+    LTRIM(RTRIM(ISNULL(rt.fpro_id, ''))) AS WorkCenter,
+    ISNULL(wc.WorkCenterName, '') AS WorkCenterName,
+    LTRIM(RTRIM(ISNULL(rt.fopermemo, ''))) AS OperationDescription,
+    rt.fcomp_date AS OperationCompletionDate,
+    CASE
+        WHEN UPPER(ISNULL(wc.WorkCenterName, '')) LIKE '%QUALITY%'
+          OR UPPER(ISNULL(wc.WorkCenterName, '')) LIKE '%INSPECTION%'
+          OR UPPER(ISNULL(wc.WorkCenterName, '')) LIKE '%SHIPPING%'
+          OR UPPER(ISNULL(rt.fopermemo, '')) LIKE '%QUALITY INSPECTION%'
+          OR UPPER(ISNULL(rt.fopermemo, '')) LIKE '%FINAL INSPECTION%'
+          OR UPPER(ISNULL(rt.fopermemo, '')) LIKE '%SHIPPING%'
+        THEN 1 ELSE 0
+    END AS IgnoreVariance
+INTO #LaborCalcTagged
+FROM #LaborCalc lc
+LEFT JOIN jodrtg rt
+    ON rt.fjobno = lc.JobNumberRaw
+    AND rt.foperno = lc.OperationNumber
+OUTER APPLY
+(
+    SELECT TOP 1
+        LTRIM(RTRIM(iw.fcpro_name)) AS WorkCenterName
+    FROM inwork iw
+    WHERE
+        LTRIM(RTRIM(iw.fcpro_id)) = LTRIM(RTRIM(rt.fpro_id))
+        AND LTRIM(RTRIM(ISNULL(iw.fcpro_name, ''))) <> ''
+    ORDER BY LTRIM(RTRIM(iw.fcpro_name))
+) wc;
+
+CREATE CLUSTERED INDEX IX_LaborCalcTagged
+    ON #LaborCalcTagged(JobNumberRaw, OperationNumber, LaborType);
+
+/* Job-level review totals intentionally exclude Quality Inspection and Shipping. */
+SELECT
+    JobNumberRaw,
+    SUM(CASE WHEN IgnoreVariance = 0 THEN ActualHours ELSE 0 END) AS ActualHours,
+    SUM(CASE WHEN IgnoreVariance = 0 THEN EstimatedHours ELSE 0 END) AS EstimatedHours
+INTO #JobTotals
+FROM #LaborCalcTagged
+GROUP BY JobNumberRaw;
+
+CREATE CLUSTERED INDEX IX_JobTotals
+    ON #JobTotals(JobNumberRaw);
+"""
+
+    jobs_sql = """
+SELECT
+    sj.JobNumber,
+    sj.PartNumber,
+    sj.PartRevision,
+    sj.JobStatus,
+    sj.CompletionDate,
+    sj.OperationCount,
+    CAST(ISNULL(jt.ActualHours, 0) AS DECIMAL(12,2)) AS ActualHours,
+    CAST(ISNULL(jt.EstimatedHours, 0) AS DECIMAL(12,2)) AS EstimatedHours,
+    CAST(
+        ISNULL(jt.EstimatedHours, 0) - ISNULL(jt.ActualHours, 0)
+        AS DECIMAL(12,2)
+    ) AS VarianceHours,
+    CASE
+        WHEN ABS(ISNULL(jt.ActualHours, 0)) < 0.01
+          OR ABS(ISNULL(jt.EstimatedHours, 0)) < 0.01
+        THEN NULL
+        ELSE CAST(
+            jt.EstimatedHours / NULLIF(jt.ActualHours, 0) * 100.0
+            AS DECIMAL(10,1)
+        )
+    END AS EfficiencyPercent,
+    CASE
+        WHEN ABS(ISNULL(jt.ActualHours, 0)) < 0.01
+          OR ABS(ISNULL(jt.EstimatedHours, 0)) < 0.01
+        THEN 'DATA REVIEW'
+        WHEN jt.EstimatedHours / NULLIF(jt.ActualHours, 0) * 100.0 < 80
+        THEN 'BELOW 80%'
+        WHEN jt.EstimatedHours / NULLIF(jt.ActualHours, 0) * 100.0 >= 125
+        THEN 'HIGH PERF REVIEW'
+        ELSE 'NORMAL'
+    END AS ReviewStatus
+FROM #SelectedJobs sj
+LEFT JOIN #JobTotals jt
+    ON jt.JobNumberRaw = sj.JobNumberRaw
+ORDER BY
+    sj.CompletionDate DESC,
+    CASE
+        WHEN ABS(ISNULL(jt.ActualHours, 0)) < 0.01
+          OR ABS(ISNULL(jt.EstimatedHours, 0)) < 0.01 THEN 4
+        WHEN jt.EstimatedHours / NULLIF(jt.ActualHours, 0) * 100.0 < 80 THEN 1
+        WHEN jt.EstimatedHours / NULLIF(jt.ActualHours, 0) * 100.0 >= 125 THEN 3
+        ELSE 2
+    END,
+    EfficiencyPercent ASC,
+    sj.JobNumber;
+"""
+
+    operations_sql = """
+SELECT
+    LTRIM(RTRIM(lt.JobNumberRaw)) AS JobNumber,
+    lt.OperationNumber,
+    MAX(lt.WorkCenter) AS WorkCenter,
+    MAX(lt.WorkCenterName) AS WorkCenterName,
+    MAX(lt.OperationDescription) AS OperationDescription,
+    MAX(lt.OperationCompletionDate) AS OperationCompletionDate,
+    MAX(lt.IgnoreVariance) AS IgnoreVariance,
+    CAST(SUM(CASE WHEN lt.LaborType = 'P' THEN lt.CompletedQty ELSE 0 END) AS DECIMAL(12,2)) AS ProductionQty,
+    CAST(SUM(CASE WHEN lt.LaborType = 'S' THEN lt.ActualHours ELSE 0 END) AS DECIMAL(12,2)) AS SetupActualHours,
+    CAST(SUM(CASE WHEN lt.LaborType = 'S' THEN lt.EstimatedHours ELSE 0 END) AS DECIMAL(12,2)) AS SetupEstimatedHours,
+    CAST(SUM(CASE WHEN lt.LaborType = 'P' THEN lt.ActualHours ELSE 0 END) AS DECIMAL(12,2)) AS ProductionActualHours,
+    CAST(SUM(CASE WHEN lt.LaborType = 'P' THEN lt.EstimatedHours ELSE 0 END) AS DECIMAL(12,2)) AS ProductionEstimatedHours,
+    CAST(SUM(lt.ActualHours) AS DECIMAL(12,2)) AS ActualHours,
+    CAST(SUM(lt.EstimatedHours) AS DECIMAL(12,2)) AS EstimatedHours,
+    CASE
+        WHEN MAX(lt.IgnoreVariance) = 1 THEN NULL
+        ELSE CAST(SUM(lt.ActualHours) - SUM(lt.EstimatedHours) AS DECIMAL(12,2))
+    END AS VarianceHours,
+    CASE
+        WHEN MAX(lt.IgnoreVariance) = 1 THEN NULL
+        WHEN ABS(SUM(lt.ActualHours)) < 0.01
+          OR ABS(SUM(lt.EstimatedHours)) < 0.01
+        THEN NULL
+        ELSE CAST(
+            SUM(lt.EstimatedHours) / NULLIF(SUM(lt.ActualHours), 0) * 100.0
+            AS DECIMAL(10,1)
+        )
+    END AS EfficiencyPercent,
+    CASE
+        WHEN MAX(lt.IgnoreVariance) = 1 THEN 'IGNORED'
+        WHEN ABS(SUM(lt.ActualHours)) < 0.01
+          OR ABS(SUM(lt.EstimatedHours)) < 0.01
+        THEN 'DATA REVIEW'
+        WHEN SUM(lt.EstimatedHours) / NULLIF(SUM(lt.ActualHours), 0) * 100.0 < 80
+        THEN 'BELOW 80%'
+        WHEN SUM(lt.EstimatedHours) / NULLIF(SUM(lt.ActualHours), 0) * 100.0 >= 125
+        THEN 'HIGH PERF REVIEW'
+        ELSE 'NORMAL'
+    END AS ReviewStatus
+FROM #LaborCalcTagged lt
+GROUP BY
+    lt.JobNumberRaw,
+    lt.OperationNumber
+ORDER BY
+    lt.JobNumberRaw,
+    lt.OperationNumber;
+"""
+
+    try:
+        # IMPORTANT: execute the temp-table build and both SELECTs in ONE SQL batch.
+        # pyodbc parameterized execution can run the parameterized statement in its
+        # own SQL Server scope; #temp tables created there are not guaranteed to be
+        # visible to a later cursor.execute() call. Keeping everything in one batch
+        # preserves #SelectedJobs / #LaborAgg / #LaborCalc / #JobTotals through both
+        # report SELECTs.
+        report_sql = build_sql + "\n" + jobs_sql + "\n" + operations_sql
+        cursor.execute(report_sql, start_value, end_value)
+
+        result_sets = []
+        while True:
+            if cursor.description is not None:
+                result_sets.append(rows_to_dicts(cursor, cursor.fetchall()))
+                if len(result_sets) >= 2:
+                    break
+            if not cursor.nextset():
+                break
+
+        if len(result_sets) < 2:
+            raise RuntimeError(
+                "Completed Job Review SQL did not return both expected result sets."
+            )
+
+        jobs = result_sets[0]
+        operations = result_sets[1]
+    finally:
+        conn.close()
+
+    total_actual = sum(_safe_float(row.get("ActualHours")) for row in jobs)
+    total_estimated = sum(_safe_float(row.get("EstimatedHours")) for row in jobs)
+
+    summary = {
+        "TotalJobs": len(jobs),
+        "DataReviewJobs": sum(1 for row in jobs if row.get("ReviewStatus") == "DATA REVIEW"),
+        "Below80Jobs": sum(1 for row in jobs if row.get("ReviewStatus") == "BELOW 80%"),
+        "NormalJobs": sum(1 for row in jobs if row.get("ReviewStatus") == "NORMAL"),
+        "HighPerfReviewJobs": sum(1 for row in jobs if row.get("ReviewStatus") == "HIGH PERF REVIEW"),
+        "TotalActualHours": round(total_actual, 2),
+        "TotalEstimatedHours": round(total_estimated, 2),
+        "OverallEfficiencyPercent": round(total_estimated / total_actual * 100.0, 1) if total_actual >= 0.01 else None,
+    }
+
+    return {
+        "start_date": start_value.isoformat(),
+        "end_date": end_value.isoformat(),
+        "summary": summary,
+        "jobs": jobs,
+        "operations": operations,
+    }
+
+
 HISTORY_HTML = r"""<!DOCTYPE html>
 <html>
 <head>
@@ -910,6 +1269,7 @@ tbody tr:hover:not(.average-row) { background: #f0f5fa; }
         <a class="active" href="/">Part Labor History</a>
         <a href="/live">Live Employee Performance</a>
         <a href="/dashboard">Live Job Dashboard</a>
+        <a href="/completed">Completed Job Review</a>
     </nav>
 </header>
 <main class="shell">
@@ -1632,9 +1992,9 @@ function displayResults(data) {
         const workCenterLabels = [...new Set(rows.map(row => {
             const id = (row.WorkCenter || "").trim();
             const name = (row.WorkCenterName || "").trim();
-            if (name && id) return `${name} (WC ${id})`;
+            if (name && id) return `WC ${id} • ${name}`;
             if (name) return name;
-            if (id) return `Work Center ${id}`;
+            if (id) return `WC ${id}`;
             return "";
         }).filter(Boolean))];
         const workCenterText = workCenterLabels.join(" / ");
@@ -1918,6 +2278,7 @@ button:hover { filter: brightness(.96); }
         <a href="/">Part Labor History</a>
         <a class="active" href="/live">Live Employee Performance</a>
         <a href="/dashboard">Live Job Dashboard</a>
+        <a href="/completed">Completed Job Review</a>
     </nav>
 </header>
 <main class="shell">
@@ -2341,6 +2702,7 @@ button:hover { filter: brightness(.96); }
         <a href="/">Part Labor History</a>
         <a href="/live">Live Employee Performance</a>
         <a class="active" href="/dashboard">Live Job Dashboard</a>
+        <a href="/completed">Completed Job Review</a>
     </nav>
 </header>
 <main class="shell">
@@ -2519,6 +2881,569 @@ refreshTimer = setInterval(() => loadDashboard(false), 30000);
 </body>
 </html>"""
 
+
+COMPLETED_HTML = r"""<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Completed Job Review</title>
+<style>
+:root {
+    --navy: #14273d;
+    --navy-2: #1f3a56;
+    --blue: #2767a8;
+    --blue-soft: #eaf2fb;
+    --ink: #1c2733;
+    --muted: #667587;
+    --line: #d9e1e8;
+    --panel: #ffffff;
+    --canvas: #eef2f6;
+    --soft: #f7f9fb;
+    --good-bg: #edf8f2;
+    --good-line: #abd9c3;
+    --good-text: #17633f;
+    --bad-bg: #fff1f1;
+    --bad-line: #e5b3b3;
+    --bad-text: #9b2f2f;
+    --high-bg: #eef7ff;
+    --high-line: #b7d6ee;
+    --high-text: #1e537f;
+    --data-bg: #f3f0f7;
+    --data-line: #d4c8e0;
+    --data-text: #563c72;
+    --shadow: 0 7px 20px rgba(22, 38, 55, .08);
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: var(--canvas); color: var(--ink); }
+.topbar {
+    background: linear-gradient(135deg, var(--navy), var(--navy-2)); color: white;
+    min-height: 64px; display: flex; align-items: center; justify-content: space-between;
+    gap: 18px; padding: 9px 24px; box-shadow: 0 3px 11px rgba(0,0,0,.14);
+}
+.brand { display: flex; align-items: center; gap: 11px; font-size: 19px; font-weight: 750; }
+.brand-mark { width: 38px; height: 38px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: white; color: var(--navy); font-size: 12px; font-weight: 850; }
+.nav { display: flex; gap: 6px; flex-wrap: wrap; padding: 5px; background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.20); border-radius: 11px; }
+.nav a { text-decoration: none; color: #e5edf6; padding: 9px 14px; border-radius: 8px; font-weight: 800; font-size: 13px; min-width: 160px; text-align: center; border: 1px solid transparent; }
+.nav a:hover { background: rgba(255,255,255,.14); color: white; }
+.nav a.active { background: white; color: var(--navy); border-color: white; box-shadow: 0 3px 10px rgba(0,0,0,.16); }
+.nav a.active::after { content: "CURRENT VIEW"; display: block; margin-top: 2px; font-size: 8px; letter-spacing: .9px; color: var(--blue); }
+.nav a:not(.active)::after { content: "SWITCH VIEW"; display: block; margin-top: 2px; font-size: 8px; letter-spacing: .9px; color: #b9cada; }
+.shell { max-width: 1600px; margin: 0 auto; padding: 24px; }
+.page-hero { margin-bottom: 18px; }
+.eyebrow { text-transform: uppercase; letter-spacing: 1.3px; color: var(--blue); font-size: 12px; font-weight: 800; margin-bottom: 6px; }
+h1 { margin: 0; font-size: 31px; letter-spacing: -.35px; }
+.subtitle { color: var(--muted); margin-top: 7px; line-height: 1.5; max-width: 1050px; }
+.toolbar, .summary, .jobs-card, .status-box {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); margin-bottom: 16px;
+}
+.toolbar { padding: 16px; display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+input, select, button { font: inherit; min-height: 39px; border: 1px solid #c8d2dc; border-radius: 8px; }
+input, select { padding: 8px 10px; background: white; color: var(--ink); }
+input:focus, select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(39,103,168,.13); }
+button { padding: 8px 13px; background: white; color: var(--ink); font-weight: 750; cursor: pointer; }
+button:hover { background: #f3f6f9; }
+.primary { background: var(--blue); color: white; border-color: var(--blue); }
+.primary:hover { filter: brightness(.95); background: var(--blue); }
+.quick { min-height: 34px; font-size: 12px; }
+.spacer { flex: 1 1 20px; }
+.summary { padding: 16px; }
+.summary-title { font-size: 16px; font-weight: 850; color: var(--navy); margin-bottom: 11px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.summary-range { color: var(--muted); font-size: 12px; font-weight: 650; }
+.summary-grid { display: grid; grid-template-columns: repeat(8, minmax(120px, 1fr)); gap: 9px; }
+.summary-card { background: var(--soft); border: 1px solid var(--line); border-radius: 9px; padding: 11px; color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .35px; }
+.summary-value { margin-top: 5px; font-size: 21px; font-weight: 850; color: var(--ink); text-transform: none; letter-spacing: 0; }
+.summary-card.bad { background: var(--bad-bg); border-color: var(--bad-line); }
+.summary-card.bad .summary-value { color: var(--bad-text); }
+.summary-card.high { background: var(--high-bg); border-color: var(--high-line); }
+.summary-card.high .summary-value { color: var(--high-text); }
+.summary-card.data { background: var(--data-bg); border-color: var(--data-line); }
+.summary-card.data .summary-value { color: var(--data-text); }
+.summary-card.good { background: var(--good-bg); border-color: var(--good-line); }
+.summary-card.good .summary-value { color: var(--good-text); }
+.jobs-card { overflow: hidden; }
+.jobs-tools { padding: 13px 14px; display: flex; gap: 9px; align-items: end; flex-wrap: wrap; border-bottom: 1px solid var(--line); background: #fbfcfd; }
+.jobs-tools .field input { min-width: 240px; }
+.job-count { margin-left: auto; color: var(--muted); font-size: 12px; font-weight: 750; align-self: center; }
+.table-wrap { width: 100%; overflow-x: auto; }
+table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 1260px; }
+th { background: #f5f8fb; color: #526171; text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; position: sticky; top: 0; z-index: 2; }
+td { padding: 9px 8px; border-bottom: 1px solid #e8edf2; white-space: nowrap; font-size: 12px; vertical-align: middle; }
+.job-row { cursor: pointer; }
+.job-row:hover { filter: brightness(.985); }
+.job-row.status-below { background: var(--bad-bg); }
+.job-row.status-high { background: var(--high-bg); }
+.job-row.status-data { background: var(--data-bg); }
+.job-row.status-normal:nth-of-type(even) { background: #fbfcfd; }
+.expand-cell { width: 34px; text-align: center; font-size: 17px; color: var(--blue); font-weight: 850; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.job-id { font-weight: 850; color: var(--navy); }
+.part-id { font-weight: 700; }
+.status-badge { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 9px; font-weight: 850; letter-spacing: .2px; }
+.badge-below { background: #f4c7c7; color: #842626; }
+.badge-normal { background: #e4eaf0; color: #4e5d6c; }
+.badge-high { background: #cfe5f8; color: #1e537f; }
+.badge-data { background: #ddd4ea; color: #563c72; }
+.detail-row { display: none; }
+.detail-row.open { display: table-row; }
+.detail-row > td { padding: 0; background: #f7f9fb; }
+.detail-panel { padding: 14px; border-bottom: 2px solid #c8d5e2; }
+.detail-title { font-weight: 850; color: var(--navy); margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.detail-note { color: var(--muted); font-size: 11px; font-weight: 600; }
+
+/* Match the Part Labor History operation-card presentation. */
+.review-operation {
+    background: var(--panel); margin-bottom: 14px; border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden; box-shadow: var(--shadow);
+}
+.review-operation:last-child { margin-bottom: 0; }
+.review-operation-header {
+    background: linear-gradient(135deg, var(--navy), var(--navy-2)); color: white;
+    padding: 16px 18px; display: flex; justify-content: space-between; align-items: center; gap: 16px;
+}
+.review-operation-heading { min-width: 0; }
+.review-operation-number { font-size: 20px; font-weight: 850; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.review-operation-workcenter { font-size: 14px; font-weight: 700; color: #c8d8e8; }
+.review-operation-completed { margin-top: 5px; line-height: 1.4; color: #d9e5ef; font-size: 12px; }
+
+.review-operation-summary {
+    display: grid; grid-template-columns: repeat(5, minmax(125px, 1fr)); gap: 10px;
+    padding: 14px; background: #f5f8fb; border-bottom: 1px solid var(--line); overflow-x: auto;
+}
+.review-summary-card {
+    background: white; border: 1px solid var(--line); border-radius: 9px; padding: 11px;
+    color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; letter-spacing: .35px;
+}
+.review-summary-value { font-size: 19px; font-weight: 850; color: var(--ink); margin-top: 5px; text-transform: none; letter-spacing: 0; }
+.review-summary-card.bad { background: var(--bad-bg); border-color: var(--bad-line); }
+.review-summary-card.bad .review-summary-value { color: var(--bad-text); }
+.review-summary-card.high { background: var(--high-bg); border-color: var(--high-line); }
+.review-summary-card.high .review-summary-value { color: var(--high-text); }
+.review-summary-card.data { background: var(--data-bg); border-color: var(--data-line); }
+.review-summary-card.data .review-summary-value { color: var(--data-text); }
+.review-summary-card.good { background: var(--good-bg); border-color: var(--good-line); }
+.review-summary-card.good .review-summary-value { color: var(--good-text); }
+.review-summary-card.ignored { background: #f2f4f6; border-color: #d6dce2; }
+.review-summary-card.ignored .review-summary-value { color: #65717c; }
+.review-labor-title {
+    padding: 9px 15px; background: var(--blue-soft); color: var(--navy); font-size: 14px;
+    font-weight: 850; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+}
+.review-labor-table { min-width: 780px; background: white; }
+.review-labor-table th { position: static; background: #f7f9fb; font-size: 10px; }
+.review-labor-table td { font-size: 12px; }
+.ignored-strip { padding: 9px 14px; background: #f2f4f6; color: #65717c; font-size: 11px; font-weight: 700; border-top: 1px solid var(--line); }
+.ignored-badge { display:inline-block; padding:4px 8px; border-radius:999px; background:#e4e7ea; color:#56616b; font-size:10px; font-weight:800; letter-spacing:.35px; }
+.variance-good { color: var(--good-text); font-weight: 800; }
+.variance-bad { color: var(--bad-text); font-weight: 800; }
+.eff-bad { color: var(--bad-text); font-weight: 850; }
+.eff-high { color: var(--high-text); font-weight: 850; }
+.eff-normal { color: var(--good-text); font-weight: 850; }
+.status-box { padding: 14px 16px; color: var(--navy); border-left: 4px solid var(--blue); font-weight: 750; }
+.status-box.error { color: #a32f2f; border-left-color: #c74646; }
+.footer { color: #7a8794; text-align: center; font-size: 11px; padding: 10px 0 24px; }
+@media (max-width: 1150px) { .summary-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (max-width: 800px) {
+    .topbar { align-items: stretch; flex-direction: column; padding: 11px 14px; }
+    .nav { width: 100%; }
+    .nav a { flex: 1 1 145px; min-width: 0; font-size: 11px; padding: 8px 5px; }
+    .shell { padding: 12px; }
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    .toolbar .field, .toolbar input, .toolbar select, .toolbar button { width: 100%; }
+    .jobs-tools .field, .jobs-tools input, .jobs-tools select, .jobs-tools button { width: 100%; }
+    .job-count { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand"><span class="brand-mark">M2M</span><span>M2M Labor Analytics</span></div>
+    <nav class="nav">
+        <a href="/">Part Labor History</a>
+        <a href="/live">Live Employee Performance</a>
+        <a href="/dashboard">Live Job Dashboard</a>
+        <a class="active" href="/completed">Completed Job Review</a>
+    </nav>
+</header>
+<main class="shell">
+    <section class="page-hero">
+        <div class="eyebrow">Manufacturing Intelligence</div>
+        <h1>Completed Job Review</h1>
+        <div class="subtitle">Review jobs by their final routing completion date. The selected date range chooses the completed jobs; efficiency uses all historical Setup and Production labor charged to each selected job.</div>
+    </section>
+
+    <div class="toolbar">
+        <div class="field"><label class="label" for="startDate">From Completion Date</label><input id="startDate" type="date"></div>
+        <div class="field"><label class="label" for="endDate">To Completion Date</label><input id="endDate" type="date"></div>
+        <button class="primary" onclick="loadReview()">Load Review</button>
+        <button class="quick" onclick="setPreviousWeek(true)">Previous Week</button>
+        <button class="quick" onclick="setThisWeek(true)">This Week</button>
+        <button class="quick" onclick="setLastDays(28, true)">Last 4 Weeks</button>
+        <button class="quick" onclick="setLastDays(30, true)">Last 30 Days</button>
+    </div>
+
+    <div id="statusArea" class="status-box">Loading previous week...</div>
+    <div id="summaryArea"></div>
+
+    <section id="jobsCard" class="jobs-card" style="display:none;">
+        <div class="jobs-tools">
+            <div class="field"><label class="label" for="jobSearch">Job / Part Search</label><input id="jobSearch" type="text" placeholder="Filter job or part" oninput="renderJobs()"></div>
+            <div class="field"><label class="label" for="statusFilter">Review Status</label>
+                <select id="statusFilter" onchange="renderJobs()">
+                    <option value="">All Statuses</option>
+                    <option value="BELOW 80%">Below 80%</option>
+                    <option value="NORMAL">Normal 80–124.9%</option>
+                    <option value="HIGH PERF REVIEW">High Perf Review ≥125%</option>
+                    <option value="DATA REVIEW">Data Review</option>
+                </select>
+            </div>
+            <button onclick="expandAll()">Expand All</button>
+            <button onclick="collapseAll()">Collapse All</button>
+            <div id="jobCount" class="job-count"></div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th></th><th>Job</th><th>Part</th><th>Rev</th><th>Completion</th><th>Ops</th>
+                        <th class="num">Actual Hrs</th><th class="num">Estimated Hrs</th><th class="num">Variance<br>(Est - Actual)</th>
+                        <th class="num">Efficiency</th><th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="jobsBody"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <div class="footer">Completion date = latest completed routing operation • Setup estimate counted once only when setup labor exists • Production estimate based on reported completed quantity • Internal use</div>
+</main>
+<script>
+let reviewData = {jobs: [], operations: [], summary: {}};
+let operationsByJob = {};
+let openJobs = new Set();
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
+}
+function safeNumber(value) { const n = Number(value); return Number.isFinite(n) ? n : 0; }
+function formatInputDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+function displayDate(value) {
+    if (!value) return '—';
+    const raw = String(value).substring(0, 10);
+    const parts = raw.split('-');
+    if (parts.length !== 3) return escapeHtml(raw);
+    return `${Number(parts[1])}/${Number(parts[2])}/${parts[0]}`;
+}
+function moneylessNumber(value) { return safeNumber(value).toFixed(2); }
+function efficiencyText(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(1) + '%' : '—';
+}
+function rowClass(status) {
+    if (status === 'BELOW 80%') return 'status-below';
+    if (status === 'HIGH PERF REVIEW') return 'status-high';
+    if (status === 'DATA REVIEW') return 'status-data';
+    return 'status-normal';
+}
+function opClass(status) {
+    if (status === 'BELOW 80%') return 'op-below';
+    if (status === 'HIGH PERF REVIEW') return 'op-high';
+    if (status === 'DATA REVIEW') return 'op-data';
+    if (status === 'IGNORED') return 'op-ignored';
+    return '';
+}
+function badge(status) {
+    const css = status === 'BELOW 80%' ? 'badge-below'
+        : status === 'HIGH PERF REVIEW' ? 'badge-high'
+        : status === 'DATA REVIEW' ? 'badge-data' : 'badge-normal';
+    return `<span class="status-badge ${css}">${escapeHtml(status || '')}</span>`;
+}
+function efficiencyCss(status) {
+    if (status === 'BELOW 80%') return 'eff-bad';
+    if (status === 'HIGH PERF REVIEW') return 'eff-high';
+    if (status === 'NORMAL') return 'eff-normal';
+    return '';
+}
+function varianceCss(value) {
+    const n = safeNumber(value);
+    return n >= 0 ? 'variance-good' : 'variance-bad';
+}
+function mondayOfWeek(d) {
+    const copy = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const day = copy.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    copy.setDate(copy.getDate() + diff);
+    return copy;
+}
+function setPreviousWeek(loadNow) {
+    const today = new Date();
+    const thisMonday = mondayOfWeek(today);
+    const end = new Date(thisMonday); end.setDate(end.getDate() - 1);
+    const start = new Date(end); start.setDate(start.getDate() - 6);
+    document.getElementById('startDate').value = formatInputDate(start);
+    document.getElementById('endDate').value = formatInputDate(end);
+    if (loadNow) loadReview();
+}
+function setThisWeek(loadNow) {
+    const today = new Date();
+    document.getElementById('startDate').value = formatInputDate(mondayOfWeek(today));
+    document.getElementById('endDate').value = formatInputDate(today);
+    if (loadNow) loadReview();
+}
+function setLastDays(days, loadNow) {
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(start.getDate() - (days - 1));
+    document.getElementById('startDate').value = formatInputDate(start);
+    document.getElementById('endDate').value = formatInputDate(end);
+    if (loadNow) loadReview();
+}
+
+async function loadReview() {
+    const start = document.getElementById('startDate').value;
+    const end = document.getElementById('endDate').value;
+    const statusArea = document.getElementById('statusArea');
+    const summaryArea = document.getElementById('summaryArea');
+    const jobsCard = document.getElementById('jobsCard');
+
+    if (!start || !end) {
+        statusArea.className = 'status-box error';
+        statusArea.textContent = 'Select both completion dates.';
+        return;
+    }
+    if (start > end) {
+        statusArea.className = 'status-box error';
+        statusArea.textContent = 'From date cannot be after To date.';
+        return;
+    }
+
+    statusArea.className = 'status-box';
+    statusArea.textContent = 'Loading completed jobs and all historical labor...';
+    summaryArea.innerHTML = '';
+    jobsCard.style.display = 'none';
+    openJobs.clear();
+
+    try {
+        const url = `/api/completed-job-review?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`;
+        const response = await fetch(url);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || 'Could not load Completed Job Review.');
+
+        reviewData = payload;
+        operationsByJob = {};
+        (payload.operations || []).forEach(op => {
+            const job = String(op.JobNumber || '').trim();
+            if (!operationsByJob[job]) operationsByJob[job] = [];
+            operationsByJob[job].push(op);
+        });
+
+        renderSummary();
+        renderJobs();
+        jobsCard.style.display = 'block';
+        statusArea.textContent = payload.jobs.length
+            ? `Loaded ${payload.jobs.length} completed jobs.`
+            : 'No completed jobs were found for this date range.';
+    } catch (error) {
+        statusArea.className = 'status-box error';
+        statusArea.textContent = error.message;
+    }
+}
+
+function renderSummary() {
+    const s = reviewData.summary || {};
+    const efficiency = Number(s.OverallEfficiencyPercent);
+    const effClass = Number.isFinite(efficiency) && efficiency >= 80 ? 'good' : 'bad';
+    document.getElementById('summaryArea').innerHTML = `
+        <section class="summary">
+            <div class="summary-title">
+                <span>Completed Job Summary</span>
+                <span class="summary-range">${displayDate(reviewData.start_date)} through ${displayDate(reviewData.end_date)}</span>
+            </div>
+            <div class="summary-grid">
+                <div class="summary-card">Total Jobs<div class="summary-value">${safeNumber(s.TotalJobs).toFixed(0)}</div></div>
+                <div class="summary-card bad">Below 80%<div class="summary-value">${safeNumber(s.Below80Jobs).toFixed(0)}</div></div>
+                <div class="summary-card">Normal<div class="summary-value">${safeNumber(s.NormalJobs).toFixed(0)}</div></div>
+                <div class="summary-card high">High Perf Review<div class="summary-value">${safeNumber(s.HighPerfReviewJobs).toFixed(0)}</div></div>
+                <div class="summary-card data">Data Review<div class="summary-value">${safeNumber(s.DataReviewJobs).toFixed(0)}</div></div>
+                <div class="summary-card">Actual Hrs<div class="summary-value">${moneylessNumber(s.TotalActualHours)}</div></div>
+                <div class="summary-card">Estimated Hrs<div class="summary-value">${moneylessNumber(s.TotalEstimatedHours)}</div></div>
+                <div class="summary-card ${effClass}">Overall Efficiency<div class="summary-value">${efficiencyText(s.OverallEfficiencyPercent)}</div></div>
+            </div>
+        </section>`;
+}
+
+function renderJobs() {
+    const body = document.getElementById('jobsBody');
+    if (!body) return;
+    const search = (document.getElementById('jobSearch')?.value || '').trim().toLowerCase();
+    const status = document.getElementById('statusFilter')?.value || '';
+    const jobs = (reviewData.jobs || []).filter(job => {
+        const haystack = `${job.JobNumber || ''} ${job.PartNumber || ''} ${job.PartRevision || ''}`.toLowerCase();
+        return (!search || haystack.includes(search)) && (!status || job.ReviewStatus === status);
+    });
+
+    document.getElementById('jobCount').textContent = `Showing ${jobs.length} of ${(reviewData.jobs || []).length} jobs`;
+
+    if (!jobs.length) {
+        body.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#667587;padding:18px;">No jobs match the current filters.</td></tr>';
+        return;
+    }
+
+    body.innerHTML = jobs.map(job => {
+        const jobNo = String(job.JobNumber || '').trim();
+        const safeId = jobNo.replace(/[^A-Za-z0-9_-]/g, '_');
+        const isOpen = openJobs.has(jobNo);
+        return `
+            <tr class="job-row ${rowClass(job.ReviewStatus)}" data-job="${escapeHtml(jobNo)}" data-safe="${safeId}" onclick="toggleJob(this)">
+                <td class="expand-cell" id="icon-${safeId}">${isOpen ? '−' : '+'}</td>
+                <td class="job-id">${escapeHtml(jobNo)}</td>
+                <td class="part-id">${escapeHtml(job.PartNumber || '')}</td>
+                <td>${escapeHtml(job.PartRevision || '')}</td>
+                <td>${displayDate(job.CompletionDate)}</td>
+                <td class="num">${safeNumber(job.OperationCount).toFixed(0)}</td>
+                <td class="num">${moneylessNumber(job.ActualHours)}</td>
+                <td class="num">${moneylessNumber(job.EstimatedHours)}</td>
+                <td class="num ${varianceCss(job.VarianceHours)}">${moneylessNumber(job.VarianceHours)}</td>
+                <td class="num ${efficiencyCss(job.ReviewStatus)}">${efficiencyText(job.EfficiencyPercent)}</td>
+                <td>${badge(job.ReviewStatus)}</td>
+            </tr>
+            <tr id="detail-${safeId}" class="detail-row ${isOpen ? 'open' : ''}">
+                <td colspan="11">${renderOperationDetail(jobNo)}</td>
+            </tr>`;
+    }).join('');
+}
+
+function renderOperationDetail(jobNo) {
+    const ops = operationsByJob[jobNo] || [];
+    if (!ops.length) {
+        return `<div class="detail-panel"><div class="detail-title">Operation Detail</div><div class="detail-note">No valid Setup or Production labor detail was found for this completed job.</div></div>`;
+    }
+
+    const operationCards = ops.map(op => {
+        const ignored = Number(op.IgnoreVariance || 0) === 1 || op.ReviewStatus === 'IGNORED';
+        const actual = safeNumber(op.ActualHours);
+        const estimated = safeNumber(op.EstimatedHours);
+        const difference = actual - estimated; // positive = over estimate
+        const differenceText = ignored ? '—' : ((difference >= 0 ? '+' : '') + difference.toFixed(2));
+        const differenceClass = ignored ? 'ignored' : (difference > 0 ? 'bad' : 'good');
+        const efficiency = ignored ? '—' : efficiencyText(op.EfficiencyPercent);
+        const status = ignored ? '<span class="ignored-badge">IGNORED</span>' : badge(op.ReviewStatus);
+        const statusClass = ignored ? 'ignored' : op.ReviewStatus === 'BELOW 80%' ? 'bad' : op.ReviewStatus === 'HIGH PERF REVIEW' ? 'high' : op.ReviewStatus === 'DATA REVIEW' ? 'data' : 'good';
+        const wcId = escapeHtml(op.WorkCenter || '');
+        const wcName = escapeHtml(op.WorkCenterName || '');
+        const wcText = wcName && wcId ? `WC ${wcId} • ${wcName}` : (wcName || (wcId ? `WC ${wcId}` : ''));
+
+        const setupActual = safeNumber(op.SetupActualHours);
+        const setupEstimated = safeNumber(op.SetupEstimatedHours);
+        const prodActual = safeNumber(op.ProductionActualHours);
+        const prodEstimated = safeNumber(op.ProductionEstimatedHours);
+        const prodQty = safeNumber(op.ProductionQty);
+
+        const laborSection = (title, est, act, qty, includeQty) => {
+            const diff = act - est;
+            const valid = est >= 0.01 && act >= 0.01;
+            const eff = valid ? (est / act * 100) : null;
+            const laborStatus = ignored ? 'IGNORED'
+                : !valid ? 'DATA REVIEW'
+                : eff < 80 ? 'BELOW 80%'
+                : eff >= 125 ? 'HIGH PERF REVIEW'
+                : 'NORMAL';
+            const laborStatusHtml = ignored ? '<span class="ignored-badge">IGNORED</span>' : badge(laborStatus);
+            const diffCss = ignored ? '' : (diff > 0 ? 'variance-bad' : diff < 0 ? 'variance-good' : '');
+            return `
+                <div class="review-labor-title">${title}</div>
+                <div class="table-wrap">
+                    <table class="review-labor-table">
+                        <thead><tr>
+                            ${includeQty ? '<th class="num">Qty Complete</th>' : ''}
+                            <th class="num">Estimated Hrs</th><th class="num">Actual Hrs</th>
+                            <th class="num">Variance<br>(Actual - Est)</th><th class="num">Efficiency</th><th>Status</th>
+                        </tr></thead>
+                        <tbody><tr>
+                            ${includeQty ? `<td class="num">${qty.toFixed(2)}</td>` : ''}
+                            <td class="num">${est.toFixed(2)}</td>
+                            <td class="num">${act.toFixed(2)}</td>
+                            <td class="num ${diffCss}">${ignored ? '—' : ((diff >= 0 ? '+' : '') + diff.toFixed(2))}</td>
+                            <td class="num ${ignored ? '' : efficiencyCss(laborStatus)}">${ignored || eff === null ? '—' : eff.toFixed(1) + '%'}</td>
+                            <td>${laborStatusHtml}</td>
+                        </tr></tbody>
+                    </table>
+                </div>`;
+        };
+
+        return `
+            <section class="review-operation">
+                <div class="review-operation-header">
+                    <div class="review-operation-heading">
+                        <div class="review-operation-number">Operation ${escapeHtml(op.OperationNumber)}${wcText ? `<span class="review-operation-workcenter">• ${wcText}</span>` : ''}</div>
+                        <div class="review-operation-completed">Completed ${displayDate(op.OperationCompletionDate)}</div>
+                    </div>
+                </div>
+                <div class="review-operation-summary">
+                    <div class="review-summary-card">Estimated Hrs<div class="review-summary-value">${estimated.toFixed(2)}</div></div>
+                    <div class="review-summary-card">Actual Hrs<div class="review-summary-value">${actual.toFixed(2)}</div></div>
+                    <div class="review-summary-card ${differenceClass}">Variance<div class="review-summary-value">${differenceText}</div></div>
+                    <div class="review-summary-card ${statusClass}">Efficiency<div class="review-summary-value">${efficiency}</div></div>
+                    <div class="review-summary-card ${statusClass}">Status<div class="review-summary-value" style="font-size:13px">${status}</div></div>
+                </div>
+                ${laborSection('Setup', setupEstimated, setupActual, 0, false)}
+                ${laborSection('Production', prodEstimated, prodActual, prodQty, true)}
+                ${ignored ? '<div class="ignored-strip">Quality Inspection / Shipping operation — excluded from job variance and efficiency totals.</div>' : ''}
+            </section>`;
+    }).join('');
+
+    return `
+        <div class="detail-panel">
+            <div class="detail-title">
+                <span>Estimated vs. Actual Time by Operation</span>
+                <span class="detail-note">Formatted to match Part Labor History. Quality Inspection and Shipping remain visible but are excluded from review totals.</span>
+            </div>
+            ${operationCards}
+        </div>`;
+}
+
+function toggleJob(row) {
+    const safeId = row.dataset.safe || '';
+    const jobNo = row.dataset.job || '';
+    const detail = document.getElementById('detail-' + safeId);
+    const icon = document.getElementById('icon-' + safeId);
+    if (!detail || !icon) return;
+    const opening = !detail.classList.contains('open');
+    detail.classList.toggle('open', opening);
+    icon.textContent = opening ? '−' : '+';
+    if (opening) openJobs.add(jobNo); else openJobs.delete(jobNo);
+}
+function expandAll() {
+    const visibleRows = document.querySelectorAll('#jobsBody .job-row');
+    visibleRows.forEach(row => {
+        const detail = row.nextElementSibling;
+        if (detail && detail.classList.contains('detail-row')) {
+            detail.classList.add('open');
+            const icon = row.querySelector('.expand-cell');
+            if (icon) icon.textContent = '−';
+            const jobCell = row.querySelector('.job-id');
+            if (jobCell) openJobs.add(jobCell.textContent.trim());
+        }
+    });
+}
+function collapseAll() {
+    document.querySelectorAll('#jobsBody .detail-row').forEach(row => row.classList.remove('open'));
+    document.querySelectorAll('#jobsBody .expand-cell').forEach(cell => cell.textContent = '+');
+    openJobs.clear();
+}
+
+setPreviousWeek(false);
+loadReview();
+</script>
+</body>
+</html>"""
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     return HISTORY_HTML
@@ -2532,3 +3457,8 @@ def live_page():
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard_page():
     return DASHBOARD_HTML
+
+
+@app.get("/completed", response_class=HTMLResponse)
+def completed_page():
+    return COMPLETED_HTML
