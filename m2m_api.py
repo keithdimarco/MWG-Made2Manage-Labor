@@ -798,9 +798,9 @@ SELECT
 INTO #LaborCalc
 FROM #LaborAgg;
 
-/* Tag Quality Inspection and Shipping operations so their labor variance does
-   not affect Completed Job Review efficiency. The operation remains visible
-   when the user expands the job, but is clearly marked IGNORED. */
+/* Tag designated Inspection / Shipping work centers so their labor variance does
+   not affect Completed Job Review efficiency. Exclusion is based on work-center
+   ID only; operation descriptions/memos do not affect this decision. */
 SELECT
     lc.JobNumberRaw,
     lc.OperationNumber,
@@ -813,12 +813,11 @@ SELECT
     LTRIM(RTRIM(ISNULL(rt.fopermemo, ''))) AS OperationDescription,
     rt.fcomp_date AS OperationCompletionDate,
     CASE
-        WHEN UPPER(ISNULL(wc.WorkCenterName, '')) LIKE '%QUALITY%'
-          OR UPPER(ISNULL(wc.WorkCenterName, '')) LIKE '%INSPECTION%'
-          OR UPPER(ISNULL(wc.WorkCenterName, '')) LIKE '%SHIPPING%'
-          OR UPPER(ISNULL(rt.fopermemo, '')) LIKE '%QUALITY INSPECTION%'
-          OR UPPER(ISNULL(rt.fopermemo, '')) LIKE '%FINAL INSPECTION%'
-          OR UPPER(ISNULL(rt.fopermemo, '')) LIKE '%SHIPPING%'
+        /* Exclusion is based ONLY on the routing work-center ID.
+           Do not inspect the operation memo/description because normal
+           manufacturing operations can contain words such as INSPECTION. */
+        WHEN UPPER(LTRIM(RTRIM(ISNULL(rt.fpro_id, '')))) IN
+             ('90', '91', '92', '95', '99', 'INSP99', 'N90', 'N91')
         THEN 1 ELSE 0
     END AS IgnoreVariance
 INTO #LaborCalcTagged
@@ -840,7 +839,7 @@ OUTER APPLY
 CREATE CLUSTERED INDEX IX_LaborCalcTagged
     ON #LaborCalcTagged(JobNumberRaw, OperationNumber, LaborType);
 
-/* Job-level review totals intentionally exclude Quality Inspection and Shipping. */
+/* Job-level review totals intentionally exclude designated Inspection / Shipping work centers. */
 SELECT
     JobNumberRaw,
     SUM(CASE WHEN IgnoreVariance = 0 THEN ActualHours ELSE 0 END) AS ActualHours,
