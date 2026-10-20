@@ -9,7 +9,7 @@ app = FastAPI()
 
 
 def get_connection():
-    return pyodbc.connect("DSN=M2M_SQL;DATABASE=m2mdata01;")
+    return pyodbc.connect("DSN=M2M_SQL;DATABASE=m2mdata01;Trusted_Connection=true")
 
 
 def rows_to_dicts(cursor, rows):
@@ -3513,3 +3513,7 @@ def dashboard_page():
 @app.get("/completed", response_class=HTMLResponse)
 def completed_page():
     return COMPLETED_HTML
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
